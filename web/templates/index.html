@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>Protection Civile - Habillement</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
@@ -17,7 +18,7 @@
   </header>
 
   <main class="wrap">
-    <!-- LOGIN -->
+    <!-- LOGIN (masqué automatiquement sur /a/<id>) -->
     <section id="loginView" class="card center floating">
       <h1>Connexion</h1>
       <p class="muted">Admin par défaut : admin@pc.fr / admin123</p>
@@ -30,12 +31,13 @@
       <p class="mt">Lien prêt public (filtré par antenne) : <span class="badge">/a/&lt;antenna_id&gt;</span></p>
     </section>
 
-    <!-- vues -->
+    <!-- VUES -->
     <section id="dashboard" class="screen hidden"></section>
     <section id="antennes" class="screen hidden"></section>
     <section id="stock" class="screen hidden"></section>
     <section id="benevoles" class="screen hidden"></section>
     <section id="prets" class="screen hidden"></section>
+    <section id="inventaire" class="screen hidden"></section>
     <section id="admin" class="screen hidden"></section>
     <section id="pretPublic" class="screen hidden"></section>
 
