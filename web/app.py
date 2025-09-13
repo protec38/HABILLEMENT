@@ -79,7 +79,8 @@ with app.app_context():
                             pwd_hash=bcrypt.hash(os.environ.get("ADMIN_PASSWORD","admin123")), role="admin"))
         db.session.commit()
 
-@app.route("/"); @app.route("/a/<int:antenna_id>")
+@app.route("/") 
+@app.route("/a/<int:antenna_id>")
 def index(antenna_id=None): return render_template("index.html")
 
 @app.post("/api/login")
