@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pc_habillement}
+      POSTGRES_USER: ${POSTGRES_USER:-pc_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pc_pass}
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pc_user} -d ${POSTGRES_DB:-pc_habillement}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  web:
+    build: ./web
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://pc_user:pc_pass@db:5432/pc_habillement}
+      SECRET_KEY: ${SECRET_KEY:-change-me-very-secret}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@pc.fr}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      ADMIN_NAME: ${ADMIN_NAME:-Admin}
+    ports:
+      - "8010:8000"      # accès direct backend (proxifiez-le avec votre Nginx)
+    volumes:
+      - ./web:/app
+
+volumes:
+  dbdata:
