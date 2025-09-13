@@ -700,6 +700,100 @@ def debug_ensure_admin():
         return jsonify({"ok": True, "created": True})
     return jsonify({"ok": True, "created": False})
 
+
+
+
+# === Import / Template CSV bénévoles =========================================
+
+from werkzeug.utils import secure_filename
+
+@app.get("/api/volunteers/template.csv")
+@login_required
+def volunteers_template_csv():
+    si = StringIO()
+    w = csv.writer(si, delimiter=';')
+    w.writerow(["Nom", "Prénom", "Note"])
+    w.writerow(["DUPONT", "Jean", "Taille M"])
+    w.writerow(["MARTIN", "Léa", ""])
+    data = si.getvalue().encode("utf-8-sig")  # BOM pour Excel
+    return Response(
+        data, mimetype="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="benevoles_modele.csv"'}
+    )
+
+@app.post("/api/volunteers/import")
+@login_required
+def volunteers_import_csv():
+    """Importe un CSV avec colonnes Nom;Prénom;Note (séparateur ; ou ,)"""
+    if "file" not in request.files:
+        return jsonify({"ok": False, "error": "Aucun fichier fourni"}), 400
+    f = request.files["file"]
+    filename = secure_filename(f.filename or "import.csv")
+    raw = f.read()
+    try:
+        text_data = raw.decode("utf-8-sig")  # gère BOM
+    except UnicodeDecodeError:
+        text_data = raw.decode("latin-1")
+
+    # Détection du séparateur
+    try:
+        dialect = csv.Sniffer().sniff(text_data.splitlines()[0])
+        delim = dialect.delimiter
+    except Exception:
+        # défaut raisonnable si Sniffer échoue
+        delim = ";" if text_data.count(";") >= text_data.count(",") else ","
+
+    reader = csv.reader(StringIO(text_data), delimiter=delim)
+    rows = list(reader)
+    if not rows:
+        return jsonify({"ok": False, "error": "Fichier vide"}), 400
+
+    # Map colonnes
+    header = [h.strip().lower() for h in rows[0]]
+    def _col(*names):
+        for n in names:
+            if n in header: return header.index(n)
+        return None
+
+    idx_nom  = _col("nom", "lastname", "last name")
+    idx_pren = _col("prénom", "prenom", "firstname", "first name")
+    idx_note = _col("note", "infos", "info")
+    if idx_nom is None or idx_pren is None:
+        return jsonify({"ok": False, "error": "Colonnes requises: Nom, Prénom"}), 400
+
+    # Cache des bénévoles existants (nom/prénom en minuscules)
+    existing = set(
+        (v.last_name.strip().lower(), v.first_name.strip().lower())
+        for v in Volunteer.query.all()
+    )
+
+    added = 0
+    skipped = 0
+    for r in rows[1:]:
+        if not r or all(not c.strip() for c in r):  # ligne vide
+            continue
+        try:
+            ln = (r[idx_nom] or "").strip()
+            fn = (r[idx_pren] or "").strip()
+        except IndexError:
+            continue
+        if not ln or not fn:
+            continue
+        key = (ln.lower(), fn.lower())
+        if key in existing:
+            skipped += 1
+            continue
+        note = ""
+        if idx_note is not None and idx_note < len(r):
+            note = (r[idx_note] or "").strip()
+        db.session.add(Volunteer(first_name=fn, last_name=ln, note=note))
+        existing.add(key)
+        added += 1
+
+    db.session.commit()
+    return jsonify({"ok": True, "filename": filename, "added": added, "skipped": skipped, "total": added + skipped})
+
+
 # -------------------------------
 # Main
 # -------------------------------
