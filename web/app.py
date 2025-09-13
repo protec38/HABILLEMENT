@@ -590,38 +590,99 @@ def public_loan():
 
 
 # =========================
-# EXPORT CSV
+# EXPORT CSV (corrigés UTF-8-SIG + JOIN)
 # =========================
+from sqlalchemy import select
+
+def _csv_response(s, filename):
+    # BOM UTF-8 pour que Excel détecte correctement l'encodage
+    data = s.getvalue().encode("utf-8-sig")
+    return Response(
+        data, mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
 @app.get("/api/export/stock.csv")
 @login_required
 def export_stock_csv():
+    # Stock > 0, joint avec type + antenne
+    rows = (
+        db.session.query(
+            StockItem.id,
+            GarmentType.label,
+            Antenna.name,
+            StockItem.size,
+            StockItem.quantity
+        )
+        .join(GarmentType, StockItem.garment_type_id == GarmentType.id)
+        .join(Antenna, StockItem.antenna_id == Antenna.id)
+        .filter(StockItem.quantity > 0)
+        .order_by(GarmentType.label, Antenna.name, StockItem.size)
+        .all()
+    )
     si = StringIO()
     w = csv.writer(si, delimiter=';')
     w.writerow(["id","type","antenne","taille","quantite"])
-    for s in StockItem.query.all():
-        w.writerow([s.id, s.garment_type.label, s.antenna.name, s.size or "", s.quantity])
-    return Response(si.getvalue(), mimetype="text/csv",
-                    headers={"Content-Disposition": "attachment; filename=stock.csv"})
-
+    for r in rows:
+        w.writerow([r[0], r[1], r[2], r[3] or "", r[4]])
+    return _csv_response(si, "stock.csv")
 
 @app.get("/api/export/loans.csv")
 @login_required
 def export_loans_csv():
+    # Prêts en cours
+    rows = (
+        db.session.query(
+            Loan.id,
+            Volunteer.last_name, Volunteer.first_name,
+            GarmentType.label, StockItem.size,
+            Antenna.name,
+            Loan.qty, Loan.created_at
+        )
+        .join(Volunteer, Loan.volunteer_id == Volunteer.id)
+        .join(StockItem, Loan.stock_item_id == StockItem.id)
+        .join(GarmentType, StockItem.garment_type_id == GarmentType.id)
+        .join(Antenna, StockItem.antenna_id == Antenna.id)
+        .filter(Loan.returned_at.is_(None))
+        .order_by(Loan.created_at.desc())
+        .all()
+    )
     si = StringIO()
     w = csv.writer(si, delimiter=';')
     w.writerow(["id","benevole","type","taille","antenne","quantite","depuis"])
-    for l in Loan.query.filter(Loan.returned_at.is_(None)).all():
+    for r in rows:
+        w.writerow([r[0], f"{r[1]} {r[2]}", r[3], r[4] or "", r[5], r[6], r[7].isoformat()])
+    return _csv_response(si, "loans_en_cours.csv")
+
+# Historique (nouveau)
+@app.get("/api/export/loans_history.csv")
+@login_required
+def export_loans_history_csv():
+    rows = (
+        db.session.query(
+            Loan.id,
+            Volunteer.last_name, Volunteer.first_name,
+            GarmentType.label, StockItem.size,
+            Antenna.name,
+            Loan.qty, Loan.created_at, Loan.returned_at
+        )
+        .join(Volunteer, Loan.volunteer_id == Volunteer.id)
+        .join(StockItem, Loan.stock_item_id == StockItem.id)
+        .join(GarmentType, StockItem.garment_type_id == GarmentType.id)
+        .join(Antenna, StockItem.antenna_id == Antenna.id)
+        .order_by(Loan.created_at.desc())
+        .all()
+    )
+    si = StringIO()
+    w = csv.writer(si, delimiter=';')
+    w.writerow(["id","benevole","type","taille","antenne","quantite","date_pret","date_retour"])
+    for r in rows:
         w.writerow([
-            l.id,
-            f"{l.volunteer.last_name} {l.volunteer.first_name}",
-            l.stock_item.garment_type.label,
-            l.stock_item.size or "",
-            l.stock_item.antenna.name,
-            l.qty,
-            l.created_at.isoformat(),
+            r[0], f"{r[1]} {r[2]}", r[3], r[4] or "", r[5],
+            r[6], r[7].isoformat(), (r[8].isoformat() if r[8] else "")
         ])
-    return Response(si.getvalue(), mimetype="text/csv",
-                    headers={"Content-Disposition": "attachment; filename=loans.csv"})
+    return _csv_response(si, "loans_historique.csv")
+
 
 
 # =========================
