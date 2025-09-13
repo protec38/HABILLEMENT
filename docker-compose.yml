@@ -17,6 +17,6 @@ services:
       ADMIN_EMAIL: admin@pc.fr
       ADMIN_PASSWORD: admin123
       ADMIN_NAME: Admin
-    ports: [ "8000:8000" ]
+    ports: [ "8010:8000" ]
     volumes: [ "./web:/app" ]
 volumes: { dbdata: {} }
