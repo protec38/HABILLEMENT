@@ -1,8 +1,10 @@
 import os
 import time
+import csv
+from io import StringIO
 from datetime import datetime
 
-from flask import Flask, jsonify, request, render_template
+from flask import Flask, jsonify, request, render_template, Response
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import (
     LoginManager, login_user, login_required, logout_user, current_user, UserMixin
@@ -11,15 +13,22 @@ from passlib.hash import bcrypt
 from sqlalchemy import text
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
+
+# Config
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL")
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "change")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["SESSION_COOKIE_SAMESITE"] = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", "false").lower() == "true"
 
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = "index"
 
 
+# =========================
+# MODELS
+# =========================
 class User(db.Model, UserMixin):
     __tablename__ = "users"
     id = db.Column(db.Integer, primary_key=True)
@@ -81,7 +90,10 @@ def load_user(uid):
     return db.session.get(User, int(uid))
 
 
-def wait_for_db(max_tries: int = 30, delay: float = 1.0):
+# =========================
+# STARTUP HELPERS
+# =========================
+def wait_for_db(max_tries: int = 60, delay: float = 1.0):
     for _ in range(max_tries):
         try:
             db.session.execute(text("SELECT 1"))
@@ -94,6 +106,7 @@ def wait_for_db(max_tries: int = 30, delay: float = 1.0):
 with app.app_context():
     wait_for_db()
     db.create_all()
+    # ensure default admin
     email = os.environ.get("ADMIN_EMAIL", "admin@pc.fr")
     if not User.query.filter_by(email=email).first():
         db.session.add(
@@ -107,12 +120,27 @@ with app.app_context():
         db.session.commit()
 
 
+# =========================
+# ROUTES - BASE & HEALTH
+# =========================
 @app.route("/")
 @app.route("/a/<int:antenna_id>")
 def index(antenna_id=None):
     return render_template("index.html")
 
 
+@app.get("/healthz")
+def healthz():
+    try:
+        db.session.execute(text("SELECT 1"))
+        return "ok", 200
+    except Exception as e:
+        return f"db error: {e}", 500
+
+
+# =========================
+# AUTH
+# =========================
 @app.post("/api/login")
 def login_api():
     d = request.get_json() or {}
@@ -141,6 +169,9 @@ def me():
     return jsonify({"ok": False})
 
 
+# =========================
+# STATS / DASHBOARD
+# =========================
 @app.get("/api/stats")
 @login_required
 def stats():
@@ -150,6 +181,10 @@ def stats():
     return jsonify({"stock_total": stock_total, "prets_ouverts": loans_open, "benevoles": volunteers})
 
 
+
+# =========================
+# ANTENNAS
+# =========================
 @app.get("/api/antennas")
 @login_required
 def antennas_list():
@@ -161,12 +196,18 @@ def antennas_list():
 @login_required
 def antennas_add():
     d = request.get_json() or {}
-    a = Antenna(name=d.get("name", "").strip(), address=d.get("address", "").strip())
+    name = d.get("name", "").strip()
+    if not name:
+        return jsonify({"ok": False, "error": "Nom requis"}), 400
+    a = Antenna(name=name, address=d.get("address", "").strip())
     db.session.add(a)
     db.session.commit()
     return jsonify({"id": a.id, "name": a.name, "address": a.address})
 
 
+# =========================
+# USERS (ADMINS)
+# =========================
 @app.get("/api/users")
 @login_required
 def users_list():
@@ -209,6 +250,22 @@ def users_update(user_id):
     return jsonify({"ok": True})
 
 
+@app.delete("/api/users/<int:user_id>")
+@login_required
+def users_delete(user_id):
+    u = db.session.get(User, user_id)
+    if not u:
+        return jsonify({"ok": False}), 404
+    if current_user.id == u.id:
+        return jsonify({"ok": False, "error": "Impossible de supprimer votre propre compte."}), 400
+    db.session.delete(u)
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+# =========================
+# GARMENT TYPES
+# =========================
 @app.get("/api/types")
 @login_required
 def types_list():
@@ -220,17 +277,30 @@ def types_list():
 @login_required
 def types_add():
     d = request.get_json() or {}
-    t = GarmentType(label=d.get("label", "").strip(), has_size=bool(d.get("has_size", True)))
+    label = d.get("label", "").strip()
+    if not label:
+        return jsonify({"ok": False, "error": "label requis"}), 400
+    t = GarmentType(label=label, has_size=bool(d.get("has_size", True)))
     db.session.add(t)
     db.session.commit()
     return jsonify({"id": t.id})
 
 
+# =========================
+# STOCK
+# =========================
 @app.get("/api/stock")
 @login_required
 def stock_list():
     out = []
-    for s in StockItem.query.all():
+    q = StockItem.query
+    t = request.args.get("type_id", type=int)
+    a = request.args.get("antenna_id", type=int)
+    if t:
+        q = q.filter(StockItem.garment_type_id == t)
+    if a:
+        q = q.filter(StockItem.antenna_id == a)
+    for s in q.all():
         out.append(
             {
                 "id": s.id,
@@ -249,10 +319,15 @@ def stock_list():
 @login_required
 def stock_add():
     d = request.get_json() or {}
-    t = int(d.get("garment_type_id"))
-    a = int(d.get("antenna_id"))
+    try:
+        t = int(d.get("garment_type_id"))
+        a = int(d.get("antenna_id"))
+    except Exception:
+        return jsonify({"ok": False, "error": "garment_type_id et antenna_id requis"}), 400
     size = d.get("size")
     qty = int(d.get("quantity") or 0)
+    if qty <= 0:
+        return jsonify({"ok": False, "error": "quantité > 0 requise"}), 400
     item = StockItem.query.filter_by(garment_type_id=t, antenna_id=a, size=size).first()
     if item:
         item.quantity += qty
@@ -293,6 +368,9 @@ def stock_delete(item_id):
     return jsonify({"ok": True})
 
 
+# =========================
+# VOLUNTEERS
+# =========================
 @app.get("/api/volunteers")
 @login_required
 def volunteers_list():
@@ -304,7 +382,11 @@ def volunteers_list():
 @login_required
 def volunteers_add():
     d = request.get_json() or {}
-    v = Volunteer(first_name=d.get("first_name", "").strip(), last_name=d.get("last_name", "").strip(), note=d.get("note", "").strip())
+    fn = d.get("first_name", "").strip()
+    ln = d.get("last_name", "").strip()
+    if not fn or not ln:
+        return jsonify({"ok": False, "error": "Prénom et nom requis"}), 400
+    v = Volunteer(first_name=fn, last_name=ln, note=d.get("note", "").strip())
     db.session.add(v)
     db.session.commit()
     return jsonify({"id": v.id})
@@ -324,12 +406,23 @@ def volunteers_update(vol_id):
     return jsonify({"ok": True})
 
 
+@app.delete("/api/volunteers/<int:vol_id>")
+@login_required
+def volunteers_delete(vol_id):
+    v = db.session.get(Volunteer, vol_id)
+    if not v:
+        return jsonify({"ok": False}), 404
+    db.session.delete(v)
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+# =========================
+# LOANS
+# =========================
 @app.get("/api/volunteers/<int:vol_id>/loans")
 @login_required
 def volunteers_loans(vol_id):
-    v = db.session.get(Volunteer, vol_id)
-    if not v:
-        return jsonify([])
     res = []
     for l in Loan.query.filter(Loan.volunteer_id == vol_id, Loan.returned_at.is_(None)).all():
         res.append(
@@ -377,6 +470,12 @@ def loan_return(loan_id):
     return jsonify({"ok": True})
 
 
+
+
+
+# =========================
+# PUBLIC API (QR ANTENNE)
+# =========================
 @app.get("/api/public/volunteer")
 def public_find():
     fn = (request.args.get("first_name", "")).strip()
@@ -458,5 +557,60 @@ def public_loan():
     return jsonify({"ok": True})
 
 
+# =========================
+# EXPORT CSV
+# =========================
+@app.get("/api/export/stock.csv")
+@login_required
+def export_stock_csv():
+    si = StringIO()
+    w = csv.writer(si, delimiter=';')
+    w.writerow(["id","type","antenne","taille","quantite"])
+    for s in StockItem.query.all():
+        w.writerow([s.id, s.garment_type.label, s.antenna.name, s.size or "", s.quantity])
+    return Response(si.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=stock.csv"})
+
+
+@app.get("/api/export/loans.csv")
+@login_required
+def export_loans_csv():
+    si = StringIO()
+    w = csv.writer(si, delimiter=';')
+    w.writerow(["id","benevole","type","taille","antenne","quantite","depuis"])
+    for l in Loan.query.filter(Loan.returned_at.is_(None)).all():
+        w.writerow([
+            l.id,
+            f"{l.volunteer.last_name} {l.volunteer.first_name}",
+            l.stock_item.garment_type.label,
+            l.stock_item.size or "",
+            l.stock_item.antenna.name,
+            l.qty,
+            l.created_at.isoformat(),
+        ])
+    return Response(si.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=loans.csv"})
+
+
+# =========================
+# DEBUG / ASSISTANCE
+# =========================
+@app.post("/api/debug/ensure_admin")
+def debug_ensure_admin():
+    email = os.environ.get("ADMIN_EMAIL","admin@pc.fr")
+    pwd = os.environ.get("ADMIN_PASSWORD","admin123")
+    name = os.environ.get("ADMIN_NAME","Admin")
+    u = User.query.filter_by(email=email).first()
+    if not u:
+        u = User(email=email, name=name, pwd_hash=bcrypt.hash(pwd), role="admin")
+        db.session.add(u); db.session.commit()
+        return jsonify({"ok": True, "created": True})
+    return jsonify({"ok": True, "created": False})
+
+
+# =========================
+# MAIN
+# =========================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000, debug=True)
+
