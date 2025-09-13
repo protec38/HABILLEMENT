@@ -1,69 +1,68 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Protection Civile – Habillement</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
-  <style>.modal.hidden { display: none !important; }</style>
+  <meta charset="UTF-8">
+  <title>Protection Civile - Habillement</title>
+  <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-<header class="topbar glass">
-  <div class="wrap">
-    <div class="brand">PROTECTION CIVILE</div>
-    <nav id="nav" class="nav"></nav>
-  </div>
-</header>
-<main class="wrap">
-  <div id="flash"></div>
+  <nav class="nav" id="nav"></nav>
 
-  <!-- Login corrigé -->
-  <section id="loginView" class="card center floating">
-    <h1>Connexion</h1>
-    <p class="muted">Admin par défaut : admin@pc.fr / admin123</p>
-    <div class="grid-3">
-      <input id="loginEmail" class="input" placeholder="Email" value="admin@pc.fr">
-      <input id="loginPass" class="input" type="password" placeholder="Mot de passe" value="admin123">
-      <button id="loginBtn" class="btn btn-primary" onclick="App.login()">Se connecter</button>
-    </div>
-    <div id="loginError" class="alert hidden mt"></div>
-    <p class="mt">
-      Lien prêt publique (filtré par antenne) :
-      <span class="badge">/a/&lt;antenna_id&gt;</span>
-    </p>
-  </section>
+  <main id="main">
+    <!-- LOGIN -->
+    <section id="loginView" class="card center floating">
+      <h1>Connexion</h1>
+      <p class="muted">Admin par défaut : admin@pc.fr / admin123</p>
+      <div class="grid-3">
+        <input id="loginEmail" class="input" placeholder="Email" value="admin@pc.fr">
+        <input id="loginPass" class="input" type="password" placeholder="Mot de passe" value="admin123">
+        <button id="loginBtn" class="btn btn-primary" onclick="App.login()">Se connecter</button>
+      </div>
+      <div id="loginError" class="alert hidden mt"></div>
+      <p class="mt">
+        Lien prêt publique (filtré par antenne) :
+        <span class="badge">/a/&lt;antenna_id&gt;</span>
+      </p>
+    </section>
 
-  <!-- Écrans SPA -->
-  <section id="dashboard" class="screen hidden"></section>
-  <section id="antennes" class="screen hidden"></section>
-  <section id="stock" class="screen hidden"></section>
-  <section id="benevoles" class="screen hidden"></section>
-  <section id="prets" class="screen hidden"></section>
-  <section id="admin" class="screen hidden"></section>
-  <section id="pretPublic" class="screen hidden"></section>
+    <!-- DASHBOARD -->
+    <section id="dashboard" class="screen hidden"></section>
+    <!-- ANTENNES -->
+    <section id="antennes" class="screen hidden"></section>
+    <!-- STOCK -->
+    <section id="stock" class="screen hidden"></section>
+    <!-- BENEVOLES -->
+    <section id="benevoles" class="screen hidden"></section>
+    <!-- PRETS -->
+    <section id="prets" class="screen hidden"></section>
+    <!-- ADMIN -->
+    <section id="admin" class="screen hidden"></section>
+    <!-- PUBLIC -->
+    <section id="pretPublic" class="screen hidden"></section>
+  </main>
 
-  <!-- Modale -->
   <div id="modal" class="modal hidden">
-    <div class="modal-card">
+    <div class="modal-content">
       <div class="modal-header">
-        <div id="modalTitle"></div>
-        <button class="btn btn-ghost" onclick="App.closeModal()">✕</button>
+        <h2 id="modalTitle"></h2>
+        <button onclick="App.closeModal()">×</button>
       </div>
       <div id="modalBody"></div>
     </div>
   </div>
-</main>
 
-<script src="{{ url_for('static', filename='app.js') }}"></script>
-<script>
-// Entrée = login
-document.addEventListener('DOMContentLoaded', () => {
-  const email = document.getElementById('loginEmail');
-  const pass = document.getElementById('loginPass');
-  const onEnter = (e) => { if (e.key === 'Enter') { e.preventDefault(); App.login(); } };
-  email.addEventListener('keydown', onEnter);
-  pass.addEventListener('keydown', onEnter);
-});
-</script>
+  <div id="flash"></div>
+
+  <script src="/static/app.js"></script>
+  <script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const email = document.getElementById('loginEmail');
+    const pass = document.getElementById('loginPass');
+    const onEnter = (e) => { if (e.key === 'Enter') { e.preventDefault(); App.login(); } };
+    email.addEventListener('keydown', onEnter);
+    pass.addEventListener('keydown', onEnter);
+    App.init();
+  });
+  </script>
 </body>
 </html>
