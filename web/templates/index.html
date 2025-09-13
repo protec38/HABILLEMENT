@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Protection Civile – Habillement</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap">
+    <div class="brand">PROTECTION CIVILE</div>
+    <nav id="nav" class="nav"></nav>
+  </div>
+</header>
+<main class="wrap">
+  <div id="flash"></div>
+
+  <section id="loginView" class="card center">
+    <h1>Connexion</h1>
+    <p class="muted">Admin par défaut : admin@pc.fr / admin123</p>
+    <div class="grid-3">
+      <input id="loginEmail" placeholder="Email" value="admin@pc.fr">
+      <input id="loginPass" type="password" placeholder="Mot de passe" value="admin123">
+      <button class="btn btn-primary" onclick="App.login()">Se connecter</button>
+    </div>
+    <p class="mt">Page prêt publique : <a href="#" onclick="App.show('pretPublic')">/pret</a></p>
+  </section>
+
+  <section id="dashboard" class="screen hidden"></section>
+  <section id="antennes" class="screen hidden"></section>
+  <section id="stock" class="screen hidden"></section>
+  <section id="benevoles" class="screen hidden"></section>
+  <section id="prets" class="screen hidden"></section>
+  <section id="pretPublic" class="screen hidden"></section>
+</main>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

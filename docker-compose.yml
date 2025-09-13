@@ -1,0 +1,22 @@
+version: "3.9"
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: pc_habillement
+      POSTGRES_USER: pc_user
+      POSTGRES_PASSWORD: pc_pass
+    volumes: [ "dbdata:/var/lib/postgresql/data" ]
+    ports: [ "5432:5432" ]
+  web:
+    build: ./web
+    depends_on: [ db ]
+    environment:
+      DATABASE_URL: postgresql+psycopg2://pc_user:pc_pass@db:5432/pc_habillement
+      SECRET_KEY: change-me-very-secret
+      ADMIN_EMAIL: admin@pc.fr
+      ADMIN_PASSWORD: admin123
+      ADMIN_NAME: Admin
+    ports: [ "8000:8000" ]
+    volumes: [ "./web:/app" ]
+volumes: { dbdata: {} }
