@@ -83,3 +83,8 @@ main { padding: 1rem; }
   border-radius: 12px;
   margin-top: .5rem;
 }
+/* Fix modal par défaut */
+.modal { display: none; }                /* cachée par défaut */
+.modal.show { display: flex; }           /* visible quand on ajoute .show */
+.modal.hidden { display: none !important; }  /* garde la priorité */
+
