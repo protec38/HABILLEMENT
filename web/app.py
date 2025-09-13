@@ -183,7 +183,7 @@ def stats():
 
 
 # =========================
-# ANTENNAS
+# ANTENNAS (CRUD COMPLET)
 # =========================
 @app.get("/api/antennas")
 @login_required
@@ -199,10 +199,42 @@ def antennas_add():
     name = d.get("name", "").strip()
     if not name:
         return jsonify({"ok": False, "error": "Nom requis"}), 400
+    if Antenna.query.filter_by(name=name).first():
+        return jsonify({"ok": False, "error": "Cette antenne existe déjà"}), 409
     a = Antenna(name=name, address=d.get("address", "").strip())
     db.session.add(a)
     db.session.commit()
-    return jsonify({"id": a.id, "name": a.name, "address": a.address})
+    return jsonify({"ok": True, "id": a.id, "name": a.name, "address": a.address})
+
+
+@app.put("/api/antennas/<int:ant_id>")
+@login_required
+def antennas_update(ant_id):
+    d = request.get_json() or {}
+    a: Antenna = db.session.get(Antenna, ant_id)
+    if not a:
+        return jsonify({"ok": False}), 404
+    new_name = d.get("name", a.name).strip()
+    if new_name != a.name and Antenna.query.filter_by(name=new_name).first():
+        return jsonify({"ok": False, "error": "Nom d'antenne déjà utilisé"}), 409
+    a.name = new_name
+    a.address = d.get("address", a.address).strip()
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/antennas/<int:ant_id>")
+@login_required
+def antennas_delete(ant_id):
+    a: Antenna = db.session.get(Antenna, ant_id)
+    if not a:
+        return jsonify({"ok": False}), 404
+    # Optionnel : empêcher la suppression s'il y a du stock
+    if StockItem.query.filter_by(antenna_id=ant_id).first():
+        return jsonify({"ok": False, "error": "Impossible : cette antenne possède du stock."}), 400
+    db.session.delete(a)
+    db.session.commit()
+    return jsonify({"ok": True})
 
 
 # =========================
