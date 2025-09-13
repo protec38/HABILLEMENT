@@ -6,9 +6,17 @@
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-  <nav class="nav" id="nav"></nav>
+  <header class="topbar">
+    <div class="wrap">
+      <div class="brand">
+        <img src="/static/logo_pc.png" alt="Protection Civile" class="logo">
+        <span>Habillement</span>
+      </div>
+      <nav class="nav" id="nav"></nav>
+    </div>
+  </header>
 
-  <main id="main">
+  <main class="wrap">
     <!-- LOGIN -->
     <section id="loginView" class="card center floating">
       <h1>Connexion</h1>
@@ -19,50 +27,40 @@
         <button id="loginBtn" class="btn btn-primary" onclick="App.login()">Se connecter</button>
       </div>
       <div id="loginError" class="alert hidden mt"></div>
-      <p class="mt">
-        Lien prêt publique (filtré par antenne) :
-        <span class="badge">/a/&lt;antenna_id&gt;</span>
-      </p>
+      <p class="mt">Lien prêt public (filtré par antenne) : <span class="badge">/a/&lt;antenna_id&gt;</span></p>
     </section>
 
-    <!-- DASHBOARD -->
+    <!-- vues -->
     <section id="dashboard" class="screen hidden"></section>
-    <!-- ANTENNES -->
     <section id="antennes" class="screen hidden"></section>
-    <!-- STOCK -->
     <section id="stock" class="screen hidden"></section>
-    <!-- BENEVOLES -->
     <section id="benevoles" class="screen hidden"></section>
-    <!-- PRETS -->
     <section id="prets" class="screen hidden"></section>
-    <!-- ADMIN -->
     <section id="admin" class="screen hidden"></section>
-    <!-- PUBLIC -->
     <section id="pretPublic" class="screen hidden"></section>
-  </main>
 
-  <div id="modal" class="modal hidden">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2 id="modalTitle"></h2>
-        <button onclick="App.closeModal()">×</button>
+    <!-- Modal -->
+    <div id="modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div id="modalTitle"></div>
+          <button class="btn btn-ghost" onclick="App.closeModal()">✕</button>
+        </div>
+        <div id="modalBody"></div>
       </div>
-      <div id="modalBody"></div>
     </div>
-  </div>
 
-  <div id="flash"></div>
+    <div id="flash"></div>
+  </main>
 
   <script src="/static/app.js"></script>
   <script>
-  document.addEventListener('DOMContentLoaded', () => {
-    const email = document.getElementById('loginEmail');
-    const pass = document.getElementById('loginPass');
-    const onEnter = (e) => { if (e.key === 'Enter') { e.preventDefault(); App.login(); } };
-    email.addEventListener('keydown', onEnter);
-    pass.addEventListener('keydown', onEnter);
-    App.init();
-  });
+    document.addEventListener('DOMContentLoaded', () => {
+      const onEnter = (e) => { if (e.key === 'Enter') { e.preventDefault(); App.login(); } };
+      document.getElementById('loginEmail').addEventListener('keydown', onEnter);
+      document.getElementById('loginPass').addEventListener('keydown', onEnter);
+      App.init();
+    });
   </script>
 </body>
 </html>
