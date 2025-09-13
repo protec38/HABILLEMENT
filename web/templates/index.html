@@ -16,16 +16,24 @@
 </header>
 <main class="wrap">
   <div id="flash"></div>
+
+  <!-- Login corrigé -->
   <section id="loginView" class="card center floating">
     <h1>Connexion</h1>
     <p class="muted">Admin par défaut : admin@pc.fr / admin123</p>
     <div class="grid-3">
       <input id="loginEmail" class="input" placeholder="Email" value="admin@pc.fr">
       <input id="loginPass" class="input" type="password" placeholder="Mot de passe" value="admin123">
-      <button class="btn btn-primary" onclick="App.login()">Se connecter</button>
+      <button id="loginBtn" class="btn btn-primary" onclick="App.login()">Se connecter</button>
     </div>
-    <p class="mt">Lien prêt publique (filtré par antenne) : <span class="badge">/a/&lt;antenna_id&gt;</span></p>
+    <div id="loginError" class="alert hidden mt"></div>
+    <p class="mt">
+      Lien prêt publique (filtré par antenne) :
+      <span class="badge">/a/&lt;antenna_id&gt;</span>
+    </p>
   </section>
+
+  <!-- Écrans SPA -->
   <section id="dashboard" class="screen hidden"></section>
   <section id="antennes" class="screen hidden"></section>
   <section id="stock" class="screen hidden"></section>
@@ -33,13 +41,29 @@
   <section id="prets" class="screen hidden"></section>
   <section id="admin" class="screen hidden"></section>
   <section id="pretPublic" class="screen hidden"></section>
+
+  <!-- Modale -->
   <div id="modal" class="modal hidden">
     <div class="modal-card">
-      <div class="modal-header"><div id="modalTitle"></div><button class="btn btn-ghost" onclick="App.closeModal()">✕</button></div>
+      <div class="modal-header">
+        <div id="modalTitle"></div>
+        <button class="btn btn-ghost" onclick="App.closeModal()">✕</button>
+      </div>
       <div id="modalBody"></div>
     </div>
   </div>
 </main>
+
 <script src="{{ url_for('static', filename='app.js') }}"></script>
+<script>
+// Entrée = login
+document.addEventListener('DOMContentLoaded', () => {
+  const email = document.getElementById('loginEmail');
+  const pass = document.getElementById('loginPass');
+  const onEnter = (e) => { if (e.key === 'Enter') { e.preventDefault(); App.login(); } };
+  email.addEventListener('keydown', onEnter);
+  pass.addEventListener('keydown', onEnter);
+});
+</script>
 </body>
 </html>
