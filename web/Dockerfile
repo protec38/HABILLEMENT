@@ -10,4 +10,3 @@ COPY . /app
 
 EXPOSE 8000
 CMD ["gunicorn","--preload","-w","1","-b","0.0.0.0:8000","app:app","--log-level","debug","--timeout","120","--access-logfile","-","--error-logfile","-"]
-
