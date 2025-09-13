@@ -42,3 +42,7 @@ body{ margin:0; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, 
 .link{ color:#93c5fd; text-decoration:none; }
 .link:hover{ text-decoration:underline; }
 .chips .btn { padding: .45rem .7rem; }
+
+/* ✅ Styles alertes */
+.alert{ padding:.6rem .8rem; border-radius:12px; border:1px solid rgba(239,68,68,.35); background:rgba(239,68,68,.15); color:#fecaca; }
+.alert.success{ border-color: rgba(16,185,129,.35); background: rgba(16,185,129,.15); color:#d1fae5; }
