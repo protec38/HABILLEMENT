@@ -1,90 +1,60 @@
-body {
-  font-family: system-ui, sans-serif;
-  margin: 0;
-  background: #0f172a;
-  color: #f1f5f9;
-}
-.nav {
-  display: flex;
-  gap: 1rem;
-  padding: .8rem 1.2rem;
-  background: rgba(255,255,255,0.05);
-  backdrop-filter: blur(10px);
-  position: sticky;
-  top: 0;
-}
-.nav a { color: #f1f5f9; text-decoration: none; font-weight: 500; }
-.nav a.active { border-bottom: 2px solid #38bdf8; }
-
-main { padding: 1rem; }
-.screen.hidden, .hidden { display: none; }
-
-.card {
-  background: rgba(255,255,255,0.05);
-  border-radius: 16px;
-  padding: 1rem;
-  margin-bottom: 1rem;
-  box-shadow: 0 4px 12px rgba(0,0,0,.3);
-}
-.card.center { max-width: 500px; margin: 2rem auto; text-align: center; }
-
-.input, select {
-  padding: .6rem .8rem;
-  border-radius: 12px;
-  border: none;
-  width: 100%;
-  margin: .2rem 0;
-}
-.btn {
-  padding: .6rem 1rem;
-  border-radius: 12px;
-  border: none;
-  cursor: pointer;
-}
-.btn-primary { background: #38bdf8; color: #0f172a; font-weight: bold; }
-.btn-ghost { background: transparent; color: #38bdf8; }
-.btn:disabled { opacity: 0.6; cursor: not-allowed; }
-
-.table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-.table th, .table td { padding: .5rem; border-bottom: 1px solid rgba(255,255,255,.1); text-align: left; }
-
-.badge {
-  background: rgba(56,189,248,.2);
-  color: #38bdf8;
-  padding: .2rem .5rem;
-  border-radius: 8px;
-  font-size: .85rem;
+:root{
+  --pc-orange:#f28800;
+  --pc-blue:#0b3b6e;
+  --bg:#0b1220;
+  --card:#0f172a;
+  --text:#e2e8f0;
+  --muted:#94a3b8;
+  --line:#1e293b;
 }
 
-.muted { color: #94a3b8; font-size: .9rem; }
-.mt { margin-top: 1rem; }
-.grid-2 { display: grid; grid-template-columns: repeat(2,1fr); gap: .5rem; }
-.grid-3 { display: grid; grid-template-columns: repeat(3,1fr); gap: .5rem; }
-.grid-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: .5rem; }
-.chips { display: flex; gap: .5rem; flex-wrap: wrap; }
+*{box-sizing:border-box}
+body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:linear-gradient(160deg,#0b1220,#0a1020 60%,#0b1220);color:var(--text)}
 
-.modal {
-  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0,0,0,.6); display: flex; justify-content: center; align-items: center;
-}
-.modal-content {
-  background: #1e293b; padding: 1rem; border-radius: 16px; width: 600px; max-width: 90%;
-}
-.modal-header { display: flex; justify-content: space-between; align-items: center; }
-.modal-header button { background: none; border: none; color: #f1f5f9; font-size: 1.5rem; }
+.wrap{max-width:1200px;margin:0 auto;padding:1rem}
 
-.alert{ padding:.6rem .8rem; border-radius:12px; border:1px solid rgba(239,68,68,.35); background:rgba(239,68,68,.15); color:#fecaca; }
-.alert.success{ border-color: rgba(16,185,129,.35); background: rgba(16,185,129,.15); color:#d1fae5; }
+/* TOPBAR */
+.topbar{position:sticky;top:0;z-index:20;background:linear-gradient(90deg,var(--pc-blue),#08294a);box-shadow:0 8px 28px rgba(11,59,110,.35)}
+.brand{display:flex;align-items:center;gap:.6rem;color:#fff;font-weight:800;letter-spacing:.4px}
+.logo{height:34px;width:auto;filter:drop-shadow(0 6px 18px rgba(0,0,0,.35))}
+.nav{display:flex;gap:.6rem;margin-left:auto}
+.nav a{color:#fff;text-decoration:none;padding:.5rem .7rem;border-radius:10px;opacity:.95}
+.nav a.active,.nav a:hover{background:rgba(255,255,255,.16)}
 
-#flash { position: fixed; bottom: 1rem; right: 1rem; }
-.toast {
-  background: rgba(30,41,59,.9);
-  padding: .6rem 1rem;
-  border-radius: 12px;
-  margin-top: .5rem;
-}
-/* Fix modal par défaut */
-.modal { display: none; }                /* cachée par défaut */
-.modal.show { display: flex; }           /* visible quand on ajoute .show */
-.modal.hidden { display: none !important; }  /* garde la priorité */
+/* CARDS / UI */
+.card{background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.06);border-radius:18px;padding:1rem;box-shadow:0 8px 30px rgba(2,6,23,.25);backdrop-filter:blur(6px)}
+.center{max-width:680px;margin:2rem auto;text-align:center}
+.floating{margin-top:2rem}
 
+.input,select,textarea{width:100%;background:#0b1220;color:#e2e8f0;border:1px solid var(--line);border-radius:12px;padding:.6rem .8rem}
+.btn{border-radius:12px;padding:.6rem 1rem;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:#fff;cursor:pointer;backdrop-filter:blur(6px)}
+.btn-primary{background:linear-gradient(90deg,var(--pc-orange),#ff9a1a);border-color:transparent;color:#1f2937;font-weight:800}
+.btn-ghost{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.2);color:#e2e8f0}
+.btn:disabled{opacity:.6;cursor:not-allowed}
+
+.table{width:100%;border-collapse:collapse;margin-top:.6rem}
+.table th,.table td{padding:.6rem;border-top:1px solid var(--line);text-align:left}
+
+.grid-2{display:grid;grid-template-columns:repeat(2,1fr);gap:.75rem}
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem}
+.grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:.75rem}
+@media (max-width:900px){.grid-2,.grid-3,.grid-4{grid-template-columns:1fr}}
+
+.badge{display:inline-flex;align-items:center;padding:.25rem .55rem;border-radius:999px;background:rgba(242,136,0,.18);color:#ffd29a;border:1px solid rgba(242,136,0,.35)}
+.muted{color:var(--muted)}
+.hidden{display:none}
+.mt{margin-top:.8rem}
+.chips{display:flex;gap:.5rem;flex-wrap:wrap}
+
+/* Modal */
+.modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.5)}
+.modal.show{display:flex}
+.modal-card{width:min(820px,94vw);background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.03));border:1px solid rgba(255,255,255,.08);border-radius:16px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.35)}
+.modal-header{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--line);background:#0b1220}
+#modalBody{padding:16px}
+
+/* Alerts & Toasts */
+.alert{padding:.6rem .8rem;border-radius:12px;border:1px solid rgba(239,68,68,.35);background:rgba(239,68,68,.15);color:#fecaca}
+.alert.success{border-color:rgba(16,185,129,.35);background:rgba(16,185,129,.15);color:#d1fae5}
+#flash{position:fixed;right:1rem;bottom:1rem}
+.toast{background:#0b1220;border:1px solid var(--line);padding:.6rem 1rem;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.35)}
