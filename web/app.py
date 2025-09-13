@@ -202,15 +202,20 @@ def users_list():
 @login_required
 def users_add():
     d = request.get_json() or {}
+    email = (d.get("email", "").strip().lower())
+    if not email or not d.get("password"):
+        return jsonify({"ok": False, "error": "email et mot de passe requis"}), 400
+    if User.query.filter_by(email=email).first():
+        return jsonify({"ok": False, "error": "email déjà utilisé"}), 409
     u = User(
-        email=d.get("email", "").strip().lower(),
-        name=d.get("name", "").strip(),
-        pwd_hash=bcrypt.hash(d.get("password", "admin123")),
+        email=email,
+        name=d.get("name", "").strip() or email,
+        pwd_hash=bcrypt.hash(d.get("password")),
         role=d.get("role", "admin"),
     )
     db.session.add(u)
     db.session.commit()
-    return jsonify({"id": u.id})
+    return jsonify({"ok": True, "id": u.id})
 
 
 @app.put("/api/users/<int:user_id>")
@@ -286,6 +291,37 @@ def stock_add():
         db.session.add(item)
     db.session.commit()
     return jsonify({"id": item.id})
+
+
+@app.put("/api/stock/<int:item_id>")
+@login_required
+def stock_update(item_id):
+    d = request.get_json() or {}
+    s = db.session.get(StockItem, item_id)
+    if not s:
+        return jsonify({"ok": False}), 404
+    # mise à jour (tous champs optionnels)
+    if "garment_type_id" in d:
+        s.garment_type_id = int(d["garment_type_id"])
+    if "antenna_id" in d:
+        s.antenna_id = int(d["antenna_id"])
+    if "size" in d:
+        s.size = d["size"]
+    if "quantity" in d:
+        s.quantity = int(d["quantity"])
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/stock/<int:item_id>")
+@login_required
+def stock_delete(item_id):
+    s = db.session.get(StockItem, item_id)
+    if not s:
+        return jsonify({"ok": False}), 404
+    db.session.delete(s)
+    db.session.commit()
+    return jsonify({"ok": True})
 
 
 # =========================
@@ -379,7 +415,7 @@ def loan_return(loan_id):
 
 
 # =========================
-# Public (antenna-scoped)
+# Public (antenna-scoped) + retour public
 # =========================
 @app.get("/api/public/volunteer")
 def public_find():
@@ -413,6 +449,40 @@ def public_stock():
             }
         )
     return jsonify(res)
+
+
+@app.get("/api/public/loans")
+def public_loans():
+    """Liste des prêts en cours pour un bénévole (public)."""
+    vol_id = request.args.get("volunteer_id", type=int)
+    if not vol_id:
+        return jsonify([])
+    res = []
+    for l in Loan.query.filter(Loan.volunteer_id == vol_id, Loan.returned_at.is_(None)).all():
+        res.append(
+            {
+                "id": l.id,
+                "qty": l.qty,
+                "since": l.created_at.isoformat(),
+                "type": l.stock_item.garment_type.label,
+                "size": l.stock_item.size,
+                "antenna": l.stock_item.antenna.name,
+            }
+        )
+    return jsonify(res)
+
+
+@app.post("/api/public/return/<int:loan_id>")
+def public_return(loan_id):
+    """Retour d'un prêt par le bénévole (public)."""
+    l = db.session.get(Loan, loan_id)
+    if not l or l.returned_at:
+        return jsonify({"ok": False}), 404
+    l.returned_at = datetime.utcnow()
+    item = db.session.get(StockItem, l.stock_item_id)
+    item.quantity += l.qty
+    db.session.commit()
+    return jsonify({"ok": True})
 
 
 @app.post("/api/public/loan")
