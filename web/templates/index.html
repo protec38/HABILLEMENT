@@ -4,7 +4,14 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Protection Civile – Habillement</title>
+
+  <!-- CSS principal -->
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+
+  <!-- Patch pour s'assurer que la modale est bien cachée au démarrage -->
+  <style>
+    .modal.hidden { display: none !important; }
+  </style>
 </head>
 <body>
 <header class="topbar glass">
@@ -13,8 +20,11 @@
     <nav id="nav" class="nav"></nav>
   </div>
 </header>
+
 <main class="wrap">
   <div id="flash"></div>
+
+  <!-- Écran de connexion -->
   <section id="loginView" class="card center floating">
     <h1>Connexion</h1>
     <p class="muted">Admin par défaut : admin@pc.fr / admin123</p>
@@ -23,8 +33,13 @@
       <input id="loginPass" class="input" type="password" placeholder="Mot de passe" value="admin123">
       <button class="btn btn-primary" onclick="App.login()">Se connecter</button>
     </div>
-    <p class="mt">Lien prêt publique (filtré par antenne) : <span class="badge">/a/&lt;antenna_id&gt;</span></p>
+    <p class="mt">
+      Lien prêt publique (filtré par antenne) :
+      <span class="badge">/a/&lt;antenna_id&gt;</span>
+    </p>
   </section>
+
+  <!-- Écrans SPA -->
   <section id="dashboard" class="screen hidden"></section>
   <section id="antennes" class="screen hidden"></section>
   <section id="stock" class="screen hidden"></section>
@@ -32,13 +47,20 @@
   <section id="prets" class="screen hidden"></section>
   <section id="admin" class="screen hidden"></section>
   <section id="pretPublic" class="screen hidden"></section>
+
+  <!-- Modale (fermée par défaut) -->
   <div id="modal" class="modal hidden">
     <div class="modal-card">
-      <div class="modal-header"><div id="modalTitle">Titre</div><button class="btn btn-ghost" onclick="App.closeModal()">✕</button></div>
+      <div class="modal-header">
+        <div id="modalTitle"></div> <!-- titre vide au chargement -->
+        <button class="btn btn-ghost" onclick="App.closeModal()">✕</button>
+      </div>
       <div id="modalBody"></div>
     </div>
   </div>
 </main>
+
+<!-- JS principal -->
 <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>
