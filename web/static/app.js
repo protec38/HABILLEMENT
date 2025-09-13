@@ -23,26 +23,93 @@ const App = {
     this.qs('#'+id)?.classList.remove('hidden');
     document.querySelectorAll('.nav a').forEach(a=>a.classList.toggle('active', a.dataset.id===id));
   },
-  flash(msg, ok=true){ const el=document.getElementById('flash'); el.innerHTML=`<div class="toast ${ok?'show':''}">${msg}</div>`; setTimeout(()=>{ el.innerHTML=''; }, 2500); },
-  openModal(title, bodyHTML){ this.qs('#modalTitle').textContent=title; this.qs('#modalBody').innerHTML=bodyHTML; this.qs('#modal').classList.remove('hidden'); },
-  closeModal(){ this.qs('#modal').classList.add('hidden'); this.qs('#modalBody').innerHTML=''; },
-  async fetchJSON(url, opts={}){ opts.headers={'Content-Type':'application/json', ...(opts.headers||{})}; const res=await fetch(url, opts); if(!res.ok) throw new Error(await res.text()); return res.json(); },
+  flash(msg, ok=true){ 
+    const el=document.getElementById('flash'); 
+    el.innerHTML=`<div class="toast ${ok?'show':''}">${msg}</div>`; 
+    setTimeout(()=>{ el.innerHTML=''; }, 2500); 
+  },
+  openModal(title, bodyHTML){ 
+    this.qs('#modalTitle').textContent=title; 
+    this.qs('#modalBody').innerHTML=bodyHTML; 
+    this.qs('#modal').classList.remove('hidden'); 
+  },
+  closeModal(){ 
+    this.qs('#modal').classList.add('hidden'); 
+    this.qs('#modalBody').innerHTML=''; 
+  },
+
+  // ✅ fetchJSON corrigé
+  async fetchJSON(url, opts={}){
+    opts.headers={'Content-Type':'application/json', ...(opts.headers||{})};
+    const res = await fetch(url, opts);
+    let data = null;
+    try { data = await res.json(); } catch(e){ /* ignore parse error */ }
+    if(!res.ok){
+      const msg = (data && (data.error || data.message)) || `Erreur ${res.status}`;
+      const err = new Error(msg); err.status = res.status; err.data = data; throw err;
+    }
+    return data;
+  },
+
   renderNav(){
     const el=this.qs('#nav'); el.innerHTML=''; const frag=document.createDocumentFragment();
-    (this.user?this.nav: this.nav.filter(x=>!x.auth)).forEach(item=>{ const a=document.createElement('a'); a.href='#'; a.dataset.id=item.id; a.textContent=item.label; a.onclick=(e)=>{e.preventDefault(); this.show(item.id);}; frag.appendChild(a); });
-    if(this.user){ const user=document.createElement('a'); user.href='#'; user.style.marginLeft='auto'; user.textContent=this.user.name||this.user.email; frag.appendChild(user);
-      const lo=document.createElement('a'); lo.href='#'; lo.textContent='Déconnexion'; lo.onclick=async(e)=>{e.preventDefault(); await this.fetchJSON('/api/logout',{method:'POST'}); this.user=null; location.href='/';}; frag.appendChild(lo); }
+    (this.user?this.nav: this.nav.filter(x=>!x.auth)).forEach(item=>{
+      const a=document.createElement('a'); 
+      a.href='#'; a.dataset.id=item.id; a.textContent=item.label; 
+      a.onclick=(e)=>{e.preventDefault(); this.show(item.id);}; 
+      frag.appendChild(a); 
+    });
+    if(this.user){ 
+      const user=document.createElement('a'); user.href='#'; user.style.marginLeft='auto'; user.textContent=this.user.name||this.user.email; frag.appendChild(user);
+      const lo=document.createElement('a'); lo.href='#'; lo.textContent='Déconnexion'; 
+      lo.onclick=async(e)=>{e.preventDefault(); await this.fetchJSON('/api/logout',{method:'POST'}); this.user=null; location.href='/';}; 
+      frag.appendChild(lo); 
+    }
     el.appendChild(frag);
   },
+
   async init(){
     const m=location.pathname.match(/^\\/a\\/(\\d+)/); if(m){ this.publicAntennaId=Number(m[1]); }
-    try{ const me=await this.fetchJSON('/api/me'); if(me.ok){ this.user=me.user; this.renderNav(); this.qs('#loginView').classList.add('hidden'); this.show('dashboard'); return; } }catch{}
-    this.renderNav(); this.qs('#loginView').classList.remove('hidden'); if(this.publicAntennaId) this.show('pretPublic');
+    try{ 
+      const me=await this.fetchJSON('/api/me'); 
+      if(me.ok){ 
+        this.user=me.user; this.renderNav(); this.qs('#loginView').classList.add('hidden'); this.show('dashboard'); 
+        return; 
+      } 
+    }catch{}
+    this.renderNav(); this.qs('#loginView').classList.remove('hidden'); 
+    if(this.publicAntennaId) this.show('pretPublic');
   },
-  async login(){ const email=this.qs('#loginEmail').value.trim(); const password=this.qs('#loginPass').value;
-    try{ const r=await this.fetchJSON('/api/login',{method:'POST', body: JSON.stringify({email,password})}); this.user=r.user; this.renderNav(); this.qs('#loginView').classList.add('hidden'); this.show('dashboard'); }
-    catch{ this.flash('Identifiants invalides', false); } },
 
+  // ✅ login corrigé
+  async login(){
+    const btn = document.getElementById('loginBtn');
+    const email=this.qs('#loginEmail').value.trim();
+    const password=this.qs('#loginPass').value;
+    const errBox = this.qs('#loginError');
+    errBox.classList.add('hidden'); errBox.textContent='';
+
+    if(!email || !password){
+      errBox.textContent = "Email et mot de passe requis";
+      errBox.classList.remove('hidden');
+      return;
+    }
+
+    btn.disabled = true; const oldTxt = btn.textContent; btn.textContent = 'Connexion...';
+    try{
+      const r=await this.fetchJSON('/api/login',{method:'POST', body: JSON.stringify({email,password})});
+      this.user=r.user; this.renderNav(); this.qs('#loginView').classList.add('hidden'); this.show('dashboard');
+      this.flash('Bienvenue ' + (this.user.name || this.user.email));
+    }catch(e){
+      errBox.textContent = e.message || 'Identifiants invalides';
+      errBox.classList.remove('hidden');
+      this.flash('Connexion refusée', false);
+    }finally{
+      btn.disabled = false; btn.textContent = oldTxt;
+    }
+  },
+
+  // --- reste du code (inchangé) ---
   async renderDashboard(){ const box=this.qs('#dashboard'); const stats=await this.fetchJSON('/api/stats');
     box.innerHTML=`<div class="card"><h1>Tableau de bord</h1>
       <div class="stats">
@@ -154,29 +221,4 @@ const App = {
 
   async renderAdmin(){ const box=this.qs('#admin'); const users=await this.fetchJSON('/api/users');
     box.innerHTML=`<div class="card"><h1>Administration</h1>
-      <div class="toolbar grid-4"><input id="u_name" class="input" placeholder="Nom"><input id="u_email" class="input" placeholder="Email"><input id="u_pass" class="input" type="password" placeholder="Mot de passe"><button class="btn btn-primary" onclick="App.addUser()">Créer un compte admin</button></div>
-      <table class="table"><thead><tr><th>Nom</th><th>Email</th><th>Rôle</th><th></th></tr></thead><tbody>${users.map(u=>`<tr><td>${u.name}</td><td>${u.email}</td><td><span class="chip">${u.role}</span></td><td><button class="btn btn-ghost" onclick='App.editUser(${u.id}, ${JSON.stringify(u).replaceAll(\"'\",\"&apos;\")})'>Modifier</button></td></tr>`).join('')}</tbody></table></div>`; },
-  async addUser(){ const name=this.qs('#u_name').value.trim(), email=this.qs('#u_email').value.trim(), password=this.qs('#u_pass').value;
-    if(!name||!email||!password) return this.flash('Tous les champs sont requis', false);
-    try{ await this.fetchJSON('/api/users',{method:'POST', body: JSON.stringify({name,email,password,role:'admin'})}); this.renderAdmin(); this.flash('Compte admin créé'); }
-    catch(e){ this.flash('Création refusée: email déjà utilisé', false); } },
-  editUser(id,u){ this.openModal('Modifier compte', `<div class="grid-3"><input id="eu_name" class="input" value="${u.name}"><input id="eu_role" class="input" value="${u.role}"><input id="eu_pass" class="input" type="password" placeholder="Nouveau mot de passe (optionnel)"></div><div class="toolbar" style="justify-content:flex-end;"><button class="btn btn-primary" onclick="App.saveUser(${id})">Enregistrer</button></div>`); },
-  async saveUser(id){ const name=this.qs('#eu_name').value.trim(), role=this.qs('#eu_role').value.trim(), password=this.qs('#eu_pass').value; await this.fetchJSON('/api/users/'+id,{method:'PUT', body: JSON.stringify({name,role,password})}); this.closeModal(); this.renderAdmin(); this.flash('Compte mis à jour'); },
-
-  async renderPretPublic(){ const box=this.qs('#pretPublic'); const antennaInfo = this.publicAntennaId ? `<span class="badge">Antenne #${this.publicAntennaId}</span>` : '<span class="muted">Antenne: toutes</span>';
-    box.innerHTML=`<div class="card"><h1>Prêt de tenue – Public</h1><div class="muted">Lien scannable : <span class="badge">/a/&lt;antenna_id&gt;</span> ${antennaInfo}</div>
-      <div id="pp_step1"><div class="grid-3 mt"><input id="pp_first" class="input" placeholder="Prénom"><input id="pp_last" class="input" placeholder="Nom"><button class="btn btn-primary" onclick="App.ppSearch()">Continuer</button></div><div id="pp_error" class="mt muted"></div></div>
-      <div id="pp_step2" class="hidden"><div class="badge" id="pp_vol"></div>
-        <div id="pp_loans" class="mt"></div>
-        <div class="toolbar grid-4 mt"><select id="pp_item"></select><input id="pp_qty" class="input" type="number" min="1" value="1"><button class="btn btn-primary" onclick="App.ppLoan()">Emprunter</button><button class="btn btn-ghost" onclick="App.renderPretPublic()">Annuler</button></div>
-      </div></div>`; },
-  async ppSearch(){ const fn=this.qs('#pp_first').value.trim(); const ln=this.qs('#pp_last').value.trim(); const err=this.qs('#pp_error'); err.textContent='';
-    try{ const v=await this.fetchJSON(`/api/public/volunteer?first_name=${encodeURIComponent(fn)}&last_name=${encodeURIComponent(ln)}`); this.ppVolunteer=v; this.qs('#pp_step1').classList.add('hidden'); this.qs('#pp_step2').classList.remove('hidden'); this.qs('#pp_vol').textContent=`Bénévole : ${v.last_name} ${v.first_name}`;
-      const loans = await this.fetchJSON(`/api/public/loans?volunteer_id=${v.id}`);
-      this.qs('#pp_loans').innerHTML = loans.length ? `<h3>Vos prêts en cours</h3><table class="table"><thead><tr><th>Article</th><th>Qté</th><th>Depuis</th><th></th></tr></thead><tbody>${loans.map(l=>`<tr><td>${l.type} / ${l.size||'—'}</td><td>${l.qty}</td><td>${new Date(l.since).toLocaleString()}</td><td><button class="btn btn-ghost" onclick="App.ppReturn(${l.id})">Rendre</button></td></tr>`).join('')}</tbody></table>` : '<p class="muted">Aucun prêt en cours</p>';
-      const antennaParam=this.publicAntennaId?`?antenna_id=${this.publicAntennaId}`:''; const stock=await this.fetchJSON('/api/public/stock'+antennaParam); const sel=this.qs('#pp_item'); sel.innerHTML=stock.map(s=>`<option value="${s.id}">#${s.id} – ${s.type} / ${s.size||'—'} @ ${s.antenna} (Qté ${s.quantity})</option>`).join('');
-    }catch{ err.textContent="Bénévole non trouvé. Contactez l'administration."; } },
-  async ppLoan(){ const stock_item_id=Number(this.qs('#pp_item').value); const qty=Number(this.qs('#pp_qty').value||1); const r=await this.fetchJSON('/api/public/loan',{method:'POST', body: JSON.stringify({volunteer_id:this.ppVolunteer.id, stock_item_id, qty})}); if(r.ok){ this.flash('Prêt enregistré ✅'); this.renderPretPublic(); } },
-  async ppReturn(loan_id){ await this.fetchJSON('/api/public/return/'+loan_id,{method:'POST'}); this.flash('Retour enregistré ✅'); this.renderPretPublic(); }
-};
-window.App=App; window.addEventListener('DOMContentLoaded', ()=>App.init());
+      <div class="toolbar grid-4"><input id="u_name" class="input" placeholder="Nom"><input
