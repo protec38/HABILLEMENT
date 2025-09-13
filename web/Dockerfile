@@ -9,4 +9,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . /app
 
 EXPOSE 8000
-CMD ["gunicorn","-w","3","-b","0.0.0.0:8000","app:app"]
+CMD ["gunicorn","--preload","-w","1","-b","0.0.0.0:8000","app:app","--log-level","debug","--timeout","120","--access-logfile","-","--error-logfile","-"]
+
