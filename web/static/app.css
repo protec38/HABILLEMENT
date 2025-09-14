@@ -1,5 +1,6 @@
 :root{
   --pc-orange:#f28800;
+  --pc-orange-2:#ff9a1a;
   --pc-blue:#0b3b6e;
   --bg:#0b1220;
   --card:#0f172a;
@@ -9,26 +10,60 @@
   --danger:#ef4444;
 }
 
+/* Reset & base */
 *{box-sizing:border-box}
-body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:linear-gradient(160deg,#0b1220,#0a1020 60%,#0b1220);color:var(--text)}
+html,body{height:100%}
+body{
+  margin:0;
+  font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  background:linear-gradient(160deg,#0b1220,#0a1020 60%,#0b1220);
+  color:var(--text);
+}
+body.no-scroll{ overflow:hidden; }
+
 .wrap{max-width:1200px;margin:0 auto;padding:1rem}
 
 /* TOPBAR */
-.topbar{position:sticky;top:0;z-index:20;background:linear-gradient(90deg,var(--pc-blue),#08294a);box-shadow:0 8px 28px rgba(11,59,110,.35)}
+.topbar{
+  position:sticky;top:0;z-index:20;
+  background:linear-gradient(90deg,var(--pc-blue),#08294a);
+  box-shadow:0 8px 28px rgba(11,59,110,.35);
+}
+.topbar .wrap{
+  display:flex;align-items:center;gap:1rem;
+}
 .brand{display:flex;align-items:center;gap:.6rem;color:#fff;font-weight:800;letter-spacing:.4px}
 .logo{height:34px;width:auto;filter:drop-shadow(0 6px 18px rgba(0,0,0,.35))}
 .nav{display:flex;gap:.6rem;margin-left:auto;flex-wrap:wrap}
-.nav a{color:#fff;text-decoration:none;padding:.5rem .7rem;border-radius:10px;opacity:.95}
+.nav a{color:#fff;text-decoration:none;padding:.5rem .7rem;border-radius:10px;opacity:.95;transition:.15s}
 .nav a.active,.nav a:hover{background:rgba(255,255,255,.16)}
 
-/* UI */
-.card{background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.06);border-radius:18px;padding:1rem;box-shadow:0 8px 30px rgba(2,6,23,.25);backdrop-filter:blur(6px)}
+/* UI blocks */
+.card{
+  background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));
+  border:1px solid rgba(255,255,255,.06);
+  border-radius:18px;
+  padding:1rem;
+  box-shadow:0 8px 30px rgba(2,6,23,.25);
+  backdrop-filter:blur(6px);
+}
 .center{max-width:680px;margin:2rem auto;text-align:center}
 .floating{margin-top:2rem}
 
-.input,select,textarea{width:100%;background:#0b1220;color:#e2e8f0;border:1px solid var(--line);border-radius:12px;padding:.6rem .8rem}
-.btn{border-radius:12px;padding:.6rem 1rem;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:#fff;cursor:pointer;backdrop-filter:blur(6px)}
-.btn-primary{background:linear-gradient(90deg,var(--pc-orange),#ff9a1a);border-color:transparent;color:#1f2937;font-weight:800}
+.input,select,textarea{
+  width:100%;background:#0b1220;color:#e2e8f0;
+  border:1px solid var(--line);border-radius:12px;padding:.6rem .8rem;
+}
+select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='%23e2e8f0'%3E%3Cpath d='M7 10l5 5 5-5z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:calc(100% - .6rem) center;padding-right:2rem}
+
+.btn{
+  border-radius:12px;padding:.6rem 1rem;border:1px solid rgba(255,255,255,.2);
+  background:rgba(255,255,255,.06);color:#fff;cursor:pointer;backdrop-filter:blur(6px);
+}
+.btn-primary{
+  background:linear-gradient(90deg,var(--pc-orange),var(--pc-orange-2));
+  border-color:transparent;color:#1f2937;font-weight:800
+}
 .btn-ghost{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.2);color:#e2e8f0}
 .btn:disabled{opacity:.6;cursor:not-allowed}
 
@@ -38,23 +73,40 @@ body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-ser
 .grid-2{display:grid;grid-template-columns:repeat(2,1fr);gap:.75rem}
 .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem}
 .grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:.75rem}
+
 @media (max-width:900px){
   .grid-2,.grid-3,.grid-4{grid-template-columns:1fr}
   .nav a{padding:.45rem .6rem}
 }
+
 .badge{display:inline-flex;align-items:center;padding:.25rem .55rem;border-radius:999px;background:rgba(242,136,0,.18);color:#ffd29a;border:1px solid rgba(242,136,0,.35)}
 .badge-danger{background:rgba(239,68,68,.15);color:#fecaca;border:1px solid rgba(239,68,68,.35)}
 .badge-green{background:rgba(16,185,129,.15);color:#d1fae5;border:1px solid rgba(16,185,129,.35)}
+
 .muted{color:var(--muted)}
 .hidden{display:none}
 .mt{margin-top:.8rem}
 .chips{display:flex;gap:.5rem;flex-wrap:wrap}
 
-/* Modal */
-.modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.5)}
+.screen{} /* placeholder */
+
+/* ===== Modal : overlay sombre + carte OPAQUE ===== */
+.modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:999}
 .modal.show{display:flex}
-.modal-card{width:min(820px,94vw);background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.03));border:1px solid rgba(255,255,255,.08);border-radius:16px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.35)}
-.modal-header{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--line);background:#0b1220}
+.modal::before{
+  content:"";position:absolute;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(2px);
+}
+.modal-card{
+  position:relative;width:min(840px,94vw);
+  background:#0f172a; /* OPAQUE */
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:16px;overflow:hidden;
+  box-shadow:0 30px 80px rgba(0,0,0,.45);
+}
+.modal-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 14px;border-bottom:1px solid var(--line);background:#0b1220
+}
 #modalBody{padding:16px}
 
 /* Alerts & Toasts */
@@ -64,8 +116,8 @@ body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-ser
 .toast{background:#0b1220;border:1px solid var(--line);padding:.6rem 1rem;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.35)}
 
 /* Map */
-#map{height:420px;border-radius:14px;overflow:hidden;border:1px solid var(--line);}
+#map{height:420px;border-radius:14px;overflow:hidden;border:1px solid var(--line)}
 
 /* Mini charts (barres) */
 .bar-row{display:flex;gap:6px;align-items:flex-end}
-.bar{height:18px;background:linear-gradient(90deg,var(--pc-orange),#ff9a1a);border-radius:8px}
+.bar{height:18px;background:linear-gradient(90deg,var(--pc-orange),var(--pc-orange-2));border-radius:8px}
