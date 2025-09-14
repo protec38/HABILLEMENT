@@ -11,6 +11,7 @@ from flask_login import (
 )
 from passlib.hash import bcrypt
 from sqlalchemy import text, or_
+from sqlalchemy.exc import IntegrityError
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
@@ -44,7 +45,6 @@ class Antenna(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(120), unique=True, index=True, nullable=False)
     address = db.Column(db.String(255), default="")
-    # champs optionnels, si présents sur le front
     low_stock_threshold = db.Column(db.Integer)   # nullable
     lat = db.Column(db.Float)
     lng = db.Column(db.Float)
@@ -62,9 +62,8 @@ class StockItem(db.Model):
     antenna_id = db.Column(db.Integer, db.ForeignKey("antennas.id"), nullable=False)
     size = db.Column(db.String(20))
     quantity = db.Column(db.Integer, default=0)
-    # Nouveau : stockage des tags comme texte, séparés par virgule
+    # tags stockés en texte (csv)
     tags_text = db.Column(db.Text, default="")
-
     garment_type = db.relationship(GarmentType)
     antenna = db.relationship(Antenna)
 
@@ -83,11 +82,10 @@ class Loan(db.Model):
     qty = db.Column(db.Integer, default=1)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     returned_at = db.Column(db.DateTime, nullable=True)
-
     volunteer = db.relationship(Volunteer)
     stock_item = db.relationship(StockItem)
 
-# Logs & inventaire (déjà livrés)
+# Logs & inventaire
 class Log(db.Model):
     __tablename__ = "logs"
     id = db.Column(db.Integer, primary_key=True)
@@ -142,7 +140,7 @@ def wait_for_db(max_tries: int = 60, delay: float = 1.0):
 with app.app_context():
     wait_for_db()
     db.create_all()
-    # Petites migrations "safe" si colonnes manquantes
+    # Migrations idempotentes
     try:
         db.session.execute(text("ALTER TABLE stock_items ADD COLUMN IF NOT EXISTS tags_text TEXT DEFAULT ''"))
         db.session.execute(text("ALTER TABLE antennas ADD COLUMN IF NOT EXISTS low_stock_threshold INTEGER"))
@@ -170,7 +168,6 @@ with app.app_context():
 def tags_to_text(tags):
     if not tags: return ""
     if isinstance(tags, str):
-        # déjà concaténé
         return ",".join([t.strip() for t in tags.split(",") if t.strip()])
     return ",".join([str(t).strip() for t in tags if str(t).strip()])
 
@@ -282,8 +279,12 @@ def antennas_delete(ant_id):
         return jsonify({"ok": False}), 404
     if StockItem.query.filter_by(antenna_id=ant_id).first():
         return jsonify({"ok": False, "error": "Impossible : cette antenne possède du stock."}), 400
-    db.session.delete(a)
-    db.session.commit()
+    try:
+        db.session.delete(a)
+        db.session.commit()
+    except IntegrityError as e:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": "Suppression refusée (contraintes liées)."}), 400
     return jsonify({"ok": True})
 
 # ---------------------------------------------------------------------
@@ -336,8 +337,15 @@ def users_delete(user_id):
         return jsonify({"ok": False}), 404
     if current_user.id == u.id:
         return jsonify({"ok": False, "error": "Impossible de supprimer votre propre compte."}), 400
-    db.session.delete(u)
-    db.session.commit()
+    # Vérifie si l'utilisateur est référencé dans des inventaires
+    if InventorySession.query.filter_by(user_id=user_id).first():
+        return jsonify({"ok": False, "error": "Impossible : l'utilisateur est lié à des inventaires."}), 400
+    try:
+        db.session.delete(u)
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": "Suppression refusée (contraintes liées)."}), 400
     return jsonify({"ok": True})
 
 # ---------------------------------------------------------------------
@@ -371,25 +379,29 @@ def types_delete(type_id):
         return jsonify({"ok": False}), 404
     if StockItem.query.filter_by(garment_type_id=type_id).first():
         return jsonify({"ok": False, "error": "Impossible : du stock existe pour ce type."}), 400
-    db.session.delete(t)
-    db.session.commit()
+    try:
+        db.session.delete(t)
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": "Suppression refusée (contraintes liées)."}), 400
     return jsonify({"ok": True})
 
 # ---------------------------------------------------------------------
-# Stock (tags réparés)
+# Stock (tags)
 # ---------------------------------------------------------------------
 @app.get("/api/stock")
 @login_required
 def stock_list():
     out = []
-    q = StockItem.query
+    qry = StockItem.query
     t = request.args.get("type_id", type=int)
     a = request.args.get("antenna_id", type=int)
     if t:
-        q = q.filter(StockItem.garment_type_id == t)
+        qry = qry.filter(StockItem.garment_type_id == t)
     if a:
-        q = q.filter(StockItem.antenna_id == a)
-    for s in q.all():
+        qry = qry.filter(StockItem.antenna_id == a)
+    for s in qry.all():
         out.append(
             {
                 "id": s.id,
@@ -453,9 +465,16 @@ def stock_delete(item_id):
     s = db.session.get(StockItem, item_id)
     if not s:
         return jsonify({"ok": False}), 404
-    db.session.delete(s)
+    # Bloque si des prêts existent (ouverts ou historiques)
+    if Loan.query.filter_by(stock_item_id=item_id).first():
+        return jsonify({"ok": False, "error": "Impossible : cet article a des prêts associés."}), 400
+    try:
+        db.session.delete(s)
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": "Suppression refusée (contraintes liées)."}), 400
     log_action("stock.delete", "stock", item_id, "delete")
-    db.session.commit()
     return jsonify({"ok": True})
 
 # ---------------------------------------------------------------------
@@ -508,8 +527,15 @@ def volunteers_delete(vol_id):
     v = db.session.get(Volunteer, vol_id)
     if not v:
         return jsonify({"ok": False}), 404
-    db.session.delete(v)
-    db.session.commit()
+    # Bloque si des prêts sont liés
+    if Loan.query.filter_by(volunteer_id=vol_id).first():
+        return jsonify({"ok": False, "error": "Impossible : ce bénévole a des prêts associés."}), 400
+    try:
+        db.session.delete(v)
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": "Suppression refusée (contraintes liées)."}), 400
     return jsonify({"ok": True})
 
 # Import CSV
@@ -645,7 +671,7 @@ def loan_return(loan_id):
     return jsonify({"ok": True})
 
 # ---------------------------------------------------------------------
-# Public (QR)
+# Public (QR) + filtres
 # ---------------------------------------------------------------------
 @app.get("/api/public/volunteer")
 def public_find():
@@ -661,12 +687,42 @@ def public_find():
 @app.get("/api/public/stock")
 def public_stock():
     antenna_id = request.args.get("antenna_id", type=int)
+    type_id = request.args.get("type_id", type=int)
+    size = request.args.get("size", type=str)
     q = StockItem.query.filter(StockItem.quantity > 0)
     if antenna_id: q = q.filter(StockItem.antenna_id == antenna_id)
+    if type_id: q = q.filter(StockItem.garment_type_id == type_id)
+    if size: q = q.filter(db.func.coalesce(StockItem.size, "") == size.strip())
     res = []
     for s in q.all():
-        res.append({"id": s.id, "type": s.garment_type.label, "size": s.size, "antenna": s.antenna.name, "antenna_id": s.antenna_id, "quantity": s.quantity})
+        res.append({"id": s.id, "type": s.garment_type.label, "type_id": s.garment_type_id, "size": s.size, "antenna": s.antenna.name, "antenna_id": s.antenna_id, "quantity": s.quantity})
     return jsonify(res)
+
+@app.get("/api/public/types")
+def public_types():
+    """Liste des types disponibles (option antenne) pour alimenter le filtre public."""
+    antenna_id = request.args.get("antenna_id", type=int)
+    q = db.session.query(StockItem.garment_type_id, GarmentType.label).join(GarmentType, StockItem.garment_type_id == GarmentType.id).filter(StockItem.quantity > 0)
+    if antenna_id:
+        q = q.filter(StockItem.antenna_id == antenna_id)
+    seen = {}
+    for tid, label in q.all():
+        seen[tid] = label
+    out = [{"id": tid, "label": label} for tid, label in sorted(seen.items(), key=lambda x: x[1].lower())]
+    return jsonify(out)
+
+@app.get("/api/public/sizes")
+def public_sizes():
+    """Liste des tailles disponibles pour un type (et antenne optionnelle)."""
+    type_id = request.args.get("type_id", type=int)
+    antenna_id = request.args.get("antenna_id", type=int)
+    if not type_id:
+        return jsonify([])
+    q = StockItem.query.filter(StockItem.quantity > 0, StockItem.garment_type_id == type_id)
+    if antenna_id:
+        q = q.filter(StockItem.antenna_id == antenna_id)
+    sizes = sorted({s.size for s in q.all() if s.size})
+    return jsonify(sizes)
 
 @app.get("/api/public/loans")
 def public_loans():
