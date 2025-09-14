@@ -1,19 +1,21 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <title>Protection Civile - Habillement</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="/static/app.css">
-  <!-- Leaflet map -->
+  <link rel="stylesheet" href="/static/app.css" />
+
+  <!-- Leaflet (si tu affiches une carte quelque part) -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 </head>
 <body>
+  <!-- TOPBAR -->
   <header class="topbar">
     <div class="wrap">
       <div class="brand">
-        <img src="/static/logo_pc.png" alt="Protection Civile" class="logo">
+        <img src="/static/logo_pc.png" alt="Protection Civile" class="logo" />
         <span>Habillement</span>
       </div>
       <nav class="nav" id="nav"></nav>
@@ -21,20 +23,20 @@
   </header>
 
   <main class="wrap">
-    <!-- LOGIN (masqué automatiquement sur /a/<id>) -->
+    <!-- Écran de connexion (masqué automatiquement sur /a/<id>) -->
     <section id="loginView" class="card center floating">
       <h1>Connexion</h1>
-      <p class="muted">Protection Civile de l’Isère – Logiciel d’Habillement</p>
+      <p class="muted">Protection Civile – Gestion des tenues et prêts</p>
       <div class="grid-3">
-        <input id="loginEmail" class="input" placeholder="Email">
-        <input id="loginPass" class="input" type="password" placeholder="Mot de passe">
+        <input id="loginEmail" class="input" placeholder="Email" />
+        <input id="loginPass" class="input" type="password" placeholder="Mot de passe" />
         <button id="loginBtn" class="btn btn-primary" onclick="App.login()">Se connecter</button>
       </div>
       <div id="loginError" class="alert hidden mt"></div>
       <p class="mt">Lien prêt public (filtré par antenne) : <span class="badge">/a/&lt;antenna_id&gt;</span></p>
     </section>
 
-    <!-- VUES -->
+    <!-- VUES (injectées par app.js) -->
     <section id="dashboard" class="screen hidden"></section>
     <section id="antennes" class="screen hidden"></section>
     <section id="stock" class="screen hidden"></section>
@@ -45,7 +47,7 @@
     <section id="admin" class="screen hidden"></section>
     <section id="pretPublic" class="screen hidden"></section>
 
-    <!-- Modal -->
+    <!-- MODAL (overlay + carte opaques) -->
     <div id="modal" class="modal hidden">
       <div class="modal-card">
         <div class="modal-header">
@@ -56,15 +58,19 @@
       </div>
     </div>
 
+    <!-- Zone des toasts -->
     <div id="flash"></div>
   </main>
 
   <script src="/static/app.js"></script>
   <script>
+    // Raccourci ENTER pour le login + init app
     document.addEventListener('DOMContentLoaded', () => {
       const onEnter = (e) => { if (e.key === 'Enter') { e.preventDefault(); App.login(); } };
-      document.getElementById('loginEmail').addEventListener('keydown', onEnter);
-      document.getElementById('loginPass').addEventListener('keydown', onEnter);
+      const em = document.getElementById('loginEmail');
+      const pw = document.getElementById('loginPass');
+      if (em) em.addEventListener('keydown', onEnter);
+      if (pw) pw.addEventListener('keydown', onEnter);
       App.init();
     });
   </script>
