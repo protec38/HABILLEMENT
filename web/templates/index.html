@@ -4,15 +4,20 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Protection Civile – Habillement</title>
-  <link rel="icon" href="logo_pc.png" />
-  <link rel="stylesheet" href="app.css" />
+
+  <!-- Favicon -->
+  <link rel="icon" href="{{ url_for('static', filename='logo_pc.png') }}" />
+
+  <!-- CSS -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}" />
+
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <img src="logo_pc.png" alt="PC" />
+      <img src="{{ url_for('static', filename='logo_pc.png') }}" alt="PC" />
       <span>Protection Civile – Habillement</span>
     </div>
     <button id="burger" class="burger" aria-label="Ouvrir le menu">☰</button>
@@ -175,7 +180,7 @@
       </div>
     </section>
 
-    <!-- Admin (placeholder – garder compat) -->
+    <!-- Admin -->
     <section id="admin" class="screen hidden">
       <div class="card">
         <h3>Administration</h3>
@@ -188,6 +193,7 @@
     <small>© Protection Civile – Habillement</small>
   </footer>
 
-  <script src="app.js" defer></script>
+  <!-- JS -->
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
 </body>
 </html>
