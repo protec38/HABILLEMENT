@@ -24,7 +24,7 @@ SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
 DEFAULT_ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@example.com")
 DEFAULT_ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
 PAGE_SIZE_DEFAULT = 25
-
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(
     __name__,
     static_folder=os.path.join(BASE_DIR, "static"),
