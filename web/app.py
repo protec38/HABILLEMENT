@@ -126,35 +126,15 @@ def log_action(action: str, entity: str, entity_id: int | None = None, details: 
     db.session.add(Log(actor=actor, action=action, entity=entity, entity_id=entity_id, details=details))
 
 # ---------------------------------------------------------------------
-# DB bootstrapping
+# Boot DB + admin
 # ---------------------------------------------------------------------
-def wait_for_db(max_tries: int = 60, delay: float = 1.0):
-    for _ in range(max_tries):
-        try:
-            db.session.execute(text("SELECT 1"))
-            return
-        except Exception:
-            time.sleep(delay)
-    raise RuntimeError("Base de données indisponible après attente")
-
 with app.app_context():
-    wait_for_db()
     db.create_all()
-    # Migrations idempotentes
-    try:
-        db.session.execute(text("ALTER TABLE stock_items ADD COLUMN IF NOT EXISTS tags_text TEXT DEFAULT ''"))
-        db.session.execute(text("ALTER TABLE antennas ADD COLUMN IF NOT EXISTS low_stock_threshold INTEGER"))
-        db.session.execute(text("ALTER TABLE antennas ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION"))
-        db.session.execute(text("ALTER TABLE antennas ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION"))
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-    # Admin par défaut
-    email = os.environ.get("ADMIN_EMAIL", "admin@pc.fr")
-    if not User.query.filter_by(email=email).first():
+    if not User.query.first():
+        # crée un compte admin par défaut si vide
         db.session.add(
             User(
-                email=email,
+                email=os.environ.get("ADMIN_EMAIL", "admin@example.com"),
                 name=os.environ.get("ADMIN_NAME", "Admin"),
                 pwd_hash=bcrypt.hash(os.environ.get("ADMIN_PASSWORD", "admin123")),
                 role="admin",
@@ -192,34 +172,6 @@ def healthz():
         return f"db error: {e}", 500
 
 # ---------------------------------------------------------------------
-# Auth
-# ---------------------------------------------------------------------
-@app.post("/api/login")
-def login_api():
-    d = request.get_json() or {}
-    email = (d.get("email") or "").strip().lower()
-    password = d.get("password") or ""
-    u = User.query.filter_by(email=email).first()
-    if not u or not bcrypt.verify(password, u.pwd_hash):
-        return jsonify({"ok": False, "error": "Identifiants invalides"}), 401
-    login_user(u)
-    return jsonify({"ok": True, "user": {"id": u.id, "email": u.email, "name": u.name, "role": u.role}})
-
-@app.post("/api/logout")
-@login_required
-def logout_api():
-    logout_user()
-    return jsonify({"ok": True})
-
-@app.get("/api/me")
-def me():
-    if current_user.is_authenticated:
-        return jsonify(
-            {"ok": True, "user": {"id": current_user.id, "email": current_user.email, "name": current_user.name, "role": current_user.role}}
-        )
-    return jsonify({"ok": False})
-
-# ---------------------------------------------------------------------
 # Stats
 # ---------------------------------------------------------------------
 @app.get("/api/stats")
@@ -251,30 +203,29 @@ def antennas_add():
     a = Antenna(name=name, address=d.get("address", "").strip(), low_stock_threshold=d.get("low_stock_threshold"), lat=d.get("lat"), lng=d.get("lng"))
     db.session.add(a)
     db.session.commit()
-    return jsonify({"ok": True, "id": a.id})
+    log_action("antenna.add", "antenna", a.id, a.name)
+    return jsonify({"id": a.id})
 
 @app.put("/api/antennas/<int:ant_id>")
 @login_required
 def antennas_update(ant_id):
     d = request.get_json() or {}
-    a: Antenna = db.session.get(Antenna, ant_id)
+    a = db.session.get(Antenna, ant_id)
     if not a:
         return jsonify({"ok": False}), 404
-    new_name = d.get("name", a.name).strip()
-    if new_name != a.name and Antenna.query.filter_by(name=new_name).first():
-        return jsonify({"ok": False, "error": "Nom d'antenne déjà utilisé"}), 409
-    a.name = new_name
+    a.name = d.get("name", a.name).strip()
     a.address = d.get("address", a.address).strip()
-    a.low_stock_threshold = d.get("low_stock_threshold") if "low_stock_threshold" in d else a.low_stock_threshold
-    a.lat = d.get("lat") if "lat" in d else a.lat
-    a.lng = d.get("lng") if "lng" in d else a.lng
+    a.low_stock_threshold = d.get("low_stock_threshold")
+    a.lat = d.get("lat", a.lat)
+    a.lng = d.get("lng", a.lng)
     db.session.commit()
+    log_action("antenna.update", "antenna", ant_id, a.name)
     return jsonify({"ok": True})
 
 @app.delete("/api/antennas/<int:ant_id>")
 @login_required
 def antennas_delete(ant_id):
-    a: Antenna = db.session.get(Antenna, ant_id)
+    a = db.session.get(Antenna, ant_id)
     if not a:
         return jsonify({"ok": False}), 404
     if StockItem.query.filter_by(antenna_id=ant_id).first():
@@ -305,41 +256,32 @@ def users_add():
         return jsonify({"ok": False, "error": "email et mot de passe requis"}), 400
     if User.query.filter_by(email=email).first():
         return jsonify({"ok": False, "error": "email déjà utilisé"}), 409
-    u = User(
-        email=email,
-        name=d.get("name", "").strip() or email,
-        pwd_hash=bcrypt.hash(d.get("password")),
-        role=d.get("role", "admin"),
-    )
+    u = User(email=email, name=d.get("name", "").strip() or email, pwd_hash=bcrypt.hash(d.get("password")), role=d.get("role", "admin"))
     db.session.add(u)
     db.session.commit()
-    return jsonify({"ok": True, "id": u.id})
+    log_action("user.add", "user", u.id, email)
+    return jsonify({"id": u.id})
 
-@app.put("/api/users/<int:user_id>")
+@app.put("/api/users/<int:uid>")
 @login_required
-def users_update(user_id):
+def users_update(uid):
     d = request.get_json() or {}
-    u = db.session.get(User, user_id)
+    u = db.session.get(User, uid)
     if not u:
         return jsonify({"ok": False}), 404
-    u.name = d.get("name", u.name)
-    u.role = d.get("role", u.role)
-    if d.get("password"):
-        u.pwd_hash = bcrypt.hash(d["password"])
+    if "name" in d: u.name = (d.get("name") or "").strip()
+    if "password" in d and d.get("password"): u.pwd_hash = bcrypt.hash(d.get("password"))
+    if "role" in d: u.role = d.get("role")
     db.session.commit()
+    log_action("user.update", "user", uid, u.email)
     return jsonify({"ok": True})
 
-@app.delete("/api/users/<int:user_id>")
+@app.delete("/api/users/<int:uid>")
 @login_required
-def users_delete(user_id):
-    u = db.session.get(User, user_id)
+def users_delete(uid):
+    u = db.session.get(User, uid)
     if not u:
         return jsonify({"ok": False}), 404
-    if current_user.id == u.id:
-        return jsonify({"ok": False, "error": "Impossible de supprimer votre propre compte."}), 400
-    # Vérifie si l'utilisateur est référencé dans des inventaires
-    if InventorySession.query.filter_by(user_id=user_id).first():
-        return jsonify({"ok": False, "error": "Impossible : l'utilisateur est lié à des inventaires."}), 400
     try:
         db.session.delete(u)
         db.session.commit()
@@ -371,13 +313,13 @@ def types_add():
     db.session.commit()
     return jsonify({"id": t.id})
 
-@app.delete("/api/types/<int:type_id>")
+@app.delete("/api/types/<int:tid>")
 @login_required
-def types_delete(type_id):
-    t = db.session.get(GarmentType, type_id)
+def types_delete(tid):
+    t = db.session.get(GarmentType, tid)
     if not t:
         return jsonify({"ok": False}), 404
-    if StockItem.query.filter_by(garment_type_id=type_id).first():
+    if StockItem.query.filter_by(garment_type_id=tid).first():
         return jsonify({"ok": False, "error": "Impossible : du stock existe pour ce type."}), 400
     try:
         db.session.delete(t)
@@ -447,16 +389,13 @@ def stock_update(item_id):
     s = db.session.get(StockItem, item_id)
     if not s:
         return jsonify({"ok": False}), 404
-    before = s.quantity
-    s.garment_type_id = int(d.get("garment_type_id", s.garment_type_id))
-    s.antenna_id = int(d.get("antenna_id", s.antenna_id))
-    s.size = d.get("size", s.size)
-    if "quantity" in d:
-        s.quantity = int(d["quantity"])
-    if "tags" in d:
-        s.tags_text = tags_to_text(d.get("tags"))
+    if "garment_type_id" in d: s.garment_type_id = int(d.get("garment_type_id"))
+    if "antenna_id" in d: s.antenna_id = int(d.get("antenna_id"))
+    if "size" in d: s.size = d.get("size")
+    if "quantity" in d: s.quantity = int(d.get("quantity"))
+    if "tags" in d: s.tags_text = tags_to_text(d.get("tags"))
     db.session.commit()
-    log_action("stock.update", "stock", item_id, f"{before}->{s.quantity}")
+    log_action("stock.update", "stock", item_id, f"qty={s.quantity}")
     return jsonify({"ok": True})
 
 @app.delete("/api/stock/<int:item_id>")
@@ -465,9 +404,6 @@ def stock_delete(item_id):
     s = db.session.get(StockItem, item_id)
     if not s:
         return jsonify({"ok": False}), 404
-    # Bloque si des prêts existent (ouverts ou historiques)
-    if Loan.query.filter_by(stock_item_id=item_id).first():
-        return jsonify({"ok": False, "error": "Impossible : cet article a des prêts associés."}), 400
     try:
         db.session.delete(s)
         db.session.commit()
@@ -476,6 +412,62 @@ def stock_delete(item_id):
         return jsonify({"ok": False, "error": "Suppression refusée (contraintes liées)."}), 400
     log_action("stock.delete", "stock", item_id, "delete")
     return jsonify({"ok": True})
+
+# Export CSV du stock
+@app.get("/api/stock/export.csv")
+@login_required
+def stock_export_csv():
+    """
+    Export CSV du stock, avec filtres optionnels:
+      - type_id
+      - antenna_id
+      - q : recherche (type, taille, antenne, tags)
+    Retourne un CSV encodé UTF-8 avec BOM (séparateur ;) pour compatibilité Excel.
+    """
+    # base query avec jointures pour faciliter la recherche
+    qry = StockItem.query.join(GarmentType, StockItem.garment_type).join(Antenna, StockItem.antenna)
+
+    t = request.args.get("type_id", type=int)
+    a = request.args.get("antenna_id", type=int)
+    q = (request.args.get("q") or "").strip().lower()
+
+    if t:
+        qry = qry.filter(StockItem.garment_type_id == t)
+    if a:
+        qry = qry.filter(StockItem.antenna_id == a)
+    if q:
+        like = f"%{q}%"
+        qry = qry.filter(
+            or_(
+                db.func.lower(GarmentType.label).like(like),
+                db.func.lower(db.func.coalesce(StockItem.size, "")).like(like),
+                db.func.lower(Antenna.name).like(like),
+                db.func.lower(db.func.coalesce(StockItem.tags_text, "")).like(like),
+            )
+        )
+
+    # tri stable: antenne, type, taille
+    qry = qry.order_by(Antenna.name.asc(), GarmentType.label.asc(), db.func.coalesce(StockItem.size, "").asc())
+
+    # écriture CSV
+    si = StringIO()
+    w = csv.writer(si, delimiter=';')
+    w.writerow(["Antenne", "Type", "Taille", "Quantité", "Tags"])
+    for s in qry.all():
+        w.writerow([
+            s.antenna.name,
+            s.garment_type.label,
+            s.size or "",
+            s.quantity,
+            s.tags_text or "",
+        ])
+    data = si.getvalue().encode("utf-8-sig")
+    fname = "stock_export_" + datetime.utcnow().strftime("%Y%m%d") + ".csv"
+    return Response(
+        data,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'}
+    )
 
 # ---------------------------------------------------------------------
 # Volunteers (liste + recherche + import CSV + CRUD)
@@ -527,9 +519,6 @@ def volunteers_delete(vol_id):
     v = db.session.get(Volunteer, vol_id)
     if not v:
         return jsonify({"ok": False}), 404
-    # Bloque si des prêts sont liés
-    if Loan.query.filter_by(volunteer_id=vol_id).first():
-        return jsonify({"ok": False, "error": "Impossible : ce bénévole a des prêts associés."}), 400
     try:
         db.session.delete(v)
         db.session.commit()
@@ -566,44 +555,33 @@ def volunteers_import_csv():
     except UnicodeDecodeError:
         text_data = raw.decode("latin-1")
 
-    try:
-        from csv import Sniffer
-        dialect = Sniffer().sniff(text_data.splitlines()[0])
-        delim = dialect.delimiter
-    except Exception:
-        delim = ";" if text_data.count(";") >= text_data.count(",") else ","
+    # lecture CSV ; ou ; détecté automatiquement (simples heuristiques)
+    delimiter = ";" if text_data.count(";") >= text_data.count(",") else ","
+    r = csv.reader(StringIO(text_data), delimiter=delimiter)
+    rows = list(r)
 
-    reader = csv.reader(StringIO(text_data), delimiter=delim)
-    rows = list(reader)
-    if not rows:
-        return jsonify({"ok": False, "error": "Fichier vide"}), 400
+    # détection colonnes
+    header = rows[0] if rows else []
+    idx_ln = idx_fn = idx_note = None
+    for i, h in enumerate(header):
+        hh = (h or "").strip().lower()
+        if "nom" in hh and idx_ln is None: idx_ln = i
+        if ("prenom" in hh or "prénom" in hh) and idx_fn is None: idx_fn = i
+        if "note" in hh and idx_note is None: idx_note = i
 
-    header = [h.strip().lower() for h in rows[0]]
+    body = rows[1:] if len(rows) > 1 else []
+    if idx_ln is None or idx_fn is None:
+        return jsonify({"ok": False, "error": "Colonnes attendues : Nom ; Prénom ; [Note]"}), 400
 
-    def _col(*names):
-        for n in names:
-            if n in header:
-                return header.index(n)
-        return None
-
-    idx_nom = _col("nom", "lastname", "last name")
-    idx_pren = _col("prénom", "prenom", "firstname", "first name")
-    idx_note = _col("note", "infos", "info")
-    if idx_nom is None or idx_pren is None:
-        return jsonify({"ok": False, "error": "Colonnes requises: Nom, Prénom"}), 400
-
-    existing = set((v.last_name.strip().lower(), v.first_name.strip().lower()) for v in Volunteer.query.all())
-    added = 0
-    skipped = 0
-    for r in rows[1:]:
-        if not r or all(not c.strip() for c in r):
-            continue
-        try:
-            ln = (r[idx_nom] or "").strip()
-            fn = (r[idx_pren] or "").strip()
-        except IndexError:
-            continue
-        if not ln or not fn:
+    # anti doublons (nom+prénom)
+    existing = {(v.last_name.lower(), v.first_name.lower()): True for v in Volunteer.query.all()}
+    added = skipped = 0
+    for r in body:
+        if not r: continue
+        ln = (r[idx_ln] or "").strip()
+        fn = (r[idx_fn] or "").strip()
+        if not ln or not fn: 
+            skipped += 1
             continue
         key = (ln.lower(), fn.lower())
         if key in existing:
@@ -647,9 +625,9 @@ def loans_open():
         res.append(
             {
                 "id": l.id,
+                "volunteer": f"{l.volunteer.last_name} {l.volunteer.first_name}",
                 "qty": l.qty,
                 "since": l.created_at.isoformat(),
-                "volunteer": f"{l.volunteer.last_name} {l.volunteer.first_name}",
                 "type": l.stock_item.garment_type.label,
                 "size": l.stock_item.size,
                 "antenna": l.stock_item.antenna.name,
@@ -666,12 +644,12 @@ def loan_return(loan_id):
     l.returned_at = datetime.utcnow()
     item = db.session.get(StockItem, l.stock_item_id)
     item.quantity += l.qty
-    db.session.commit()
     log_action("loan.return", "loan", loan_id, f"+{l.qty} to stock_item={l.stock_item_id}")
+    db.session.commit()
     return jsonify({"ok": True})
 
 # ---------------------------------------------------------------------
-# Public (QR) + filtres
+# Public (pret antenne + filtres)
 # ---------------------------------------------------------------------
 @app.get("/api/public/volunteer")
 def public_find():
@@ -702,7 +680,7 @@ def public_stock():
 def public_types():
     """Liste des types disponibles (option antenne) pour alimenter le filtre public."""
     antenna_id = request.args.get("antenna_id", type=int)
-    q = db.session.query(StockItem.garment_type_id, GarmentType.label).join(GarmentType, StockItem.garment_type_id == GarmentType.id).filter(StockItem.quantity > 0)
+    q = db.session.query(StockItem.garment_type_id, GarmentType.label).join(GarmentType).filter(StockItem.quantity > 0)
     if antenna_id:
         q = q.filter(StockItem.antenna_id == antenna_id)
     seen = {}
@@ -753,29 +731,28 @@ def public_loan():
     item = db.session.get(StockItem, s_id)
     if not item or item.quantity < qty:
         return jsonify({"ok": False, "error": "Stock insuffisant"}), 400
+    l = Loan(volunteer_id=v_id, stock_item_id=s_id, qty=qty)
+    db.session.add(l)
     item.quantity -= qty
-    loan = Loan(volunteer_id=v_id, stock_item_id=s_id, qty=qty)
-    db.session.add(loan); db.session.commit()
-    log_action("loan.create", "loan", loan.id, f"-{qty} from stock_item={s_id} by volunteer={v_id}")
-    return jsonify({"ok": True})
+    db.session.commit()
+    log_action("loan.new.public", "loan", l.id, f"-{qty} from stock_item={s_id}")
+    return jsonify({"ok": True, "loan_id": l.id})
 
 # ---------------------------------------------------------------------
-# Inventaire
+# Inventaire (session + comptage + clôture)
 # ---------------------------------------------------------------------
 @app.post("/api/inventory/start")
 @login_required
 def inventory_start():
     d = request.get_json() or {}
-    ant = int(d.get("antenna_id") or 0)
-    if not ant: return jsonify({"ok": False, "error": "antenna_id requis"}), 400
-    sess = InventorySession(antenna_id=ant, user_id=current_user.id)
+    ant_id = int(d.get("antenna_id"))
+    sess = InventorySession(antenna_id=ant_id, user_id=current_user.id)
     db.session.add(sess); db.session.commit()
-    log_action("inventory.start", "inventory", sess.id, f"antenna={ant}")
     return jsonify({"id": sess.id})
 
-@app.get("/api/inventory/<int:sid>/items")
+@app.get("/api/inventory/<int:sid>")
 @login_required
-def inventory_items(sid):
+def inventory_get(sid):
     sess = db.session.get(InventorySession, sid)
     if not sess or sess.closed_at: return jsonify({"ok": False}), 404
     rows = []
