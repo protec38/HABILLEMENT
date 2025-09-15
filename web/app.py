@@ -25,7 +25,11 @@ DEFAULT_ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@example.com")
 DEFAULT_ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
 PAGE_SIZE_DEFAULT = 25
 
-app = Flask(__name__, static_url_path='', static_folder='.')
+app = Flask(
+    __name__,
+    static_folder=os.path.join(BASE_DIR, "static"),
+    template_folder=os.path.join(BASE_DIR, "templates"),
+)
 app.config['SECRET_KEY'] = SECRET_KEY
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -219,8 +223,8 @@ def load_user(user_id):
 
 @app.get("/")
 def index():
-    # Single page app
-    return app.send_static_file("index.html")
+    # Rend la page d’entrée de la SPA (templates/index.html)
+    return render_template("index.html")
 
 @app.post("/api/login")
 @require_csrf
