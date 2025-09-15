@@ -7,8 +7,8 @@
   <link rel="stylesheet" href="/static/app.css" />
 
   <!-- Leaflet (si tu affiches une carte quelque part) -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="anonymous"/>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin="anonymous"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 </head>
 <body>
   <!-- TOPBAR -->
@@ -23,15 +23,14 @@
   </header>
 
   <main class="wrap">
-    <!-- Écran de connexion -->
+    <!-- Écran de connexion (masqué automatiquement sur /a/<id>) -->
     <section id="loginView" class="card center floating">
       <h1>Connexion</h1>
       <p class="muted">Protection Civile – Gestion des tenues et prêts</p>
       <div class="grid-3">
-        <input id="loginEmail" class="input" placeholder="Email" autocomplete="username" />
-        <input id="loginPass" class="input" type="password" placeholder="Mot de passe" autocomplete="current-password" />
-        <!-- IMPORTANT: type="button" + inline onclick de secours -->
-        <button id="loginBtn" type="button" class="btn btn-primary" onclick="App.login()">Se connecter</button>
+        <input id="loginEmail" class="input" placeholder="Email" />
+        <input id="loginPass" class="input" type="password" placeholder="Mot de passe" />
+        <button id="loginBtn" class="btn btn-primary" onclick="App.login()">Se connecter</button>
       </div>
       <div id="loginError" class="alert hidden mt"></div>
       <p class="mt">Lien prêt public (filtré par antenne) : <span class="badge">/a/&lt;antenna_id&gt;</span></p>
@@ -63,24 +62,16 @@
     <div id="flash"></div>
   </main>
 
-  <!-- App -->
   <script src="/static/app.js"></script>
   <script>
-    // Raccourci ENTER pour le login + init app + listener de clic
+    // Raccourci ENTER pour le login + init app
     document.addEventListener('DOMContentLoaded', () => {
       const onEnter = (e) => { if (e.key === 'Enter') { e.preventDefault(); App.login(); } };
       const em = document.getElementById('loginEmail');
       const pw = document.getElementById('loginPass');
-      const btn = document.getElementById('loginBtn');
-
       if (em) em.addEventListener('keydown', onEnter);
       if (pw) pw.addEventListener('keydown', onEnter);
-      if (btn) btn.addEventListener('click', (e) => { e.preventDefault(); App.login(); });
-
-      // Lance l’app
-      if (window.App && typeof App.init === 'function') {
-        App.init();
-      }
+      App.init();
     });
   </script>
 </body>
