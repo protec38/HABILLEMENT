@@ -1,199 +1,78 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="utf-8" />
+  <meta charset="UTF-8" />
+  <title>Protection Civile - Habillement</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Protection Civile – Habillement</title>
+  <link rel="stylesheet" href="/static/app.css" />
 
-  <!-- Favicon -->
-  <link rel="icon" href="{{ url_for('static', filename='logo_pc.png') }}" />
-
-  <!-- CSS -->
-  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}" />
-
-  <!-- Chart.js -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <!-- Leaflet (si tu affiches une carte quelque part) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 </head>
 <body>
+  <!-- TOPBAR -->
   <header class="topbar">
-    <div class="brand">
-      <img src="{{ url_for('static', filename='logo_pc.png') }}" alt="PC" />
-      <span>Protection Civile – Habillement</span>
+    <div class="wrap">
+      <div class="brand">
+        <img src="/static/logo_pc.png" alt="Protection Civile" class="logo" />
+        <span>Habillement</span>
+      </div>
+      <nav class="nav" id="nav"></nav>
     </div>
-    <button id="burger" class="burger" aria-label="Ouvrir le menu">☰</button>
-    <nav id="mainnav" class="nav">
-      <a href="#dashboard" data-nav>Tableau de bord</a>
-      <a href="#stock" data-nav>Stock</a>
-      <a href="#volunteers" data-nav>Bénévoles</a>
-      <a href="#loans" data-nav>Prêts</a>
-      <a href="#inventory" data-nav>Inventaire</a>
-      <a href="#history" data-nav>Historique</a>
-      <a href="#admin" data-nav>Admin</a>
-      <button id="logoutBtn" class="secondary small">Déconnexion</button>
-    </nav>
   </header>
 
-  <main id="app">
-    <!-- Auth -->
-    <section id="login" class="screen">
-      <div class="card narrow">
-        <h2>Connexion</h2>
-        <label>Email <input id="loginEmail" type="email" autocomplete="username" /></label>
-        <label>Mot de passe <input id="loginPass" type="password" autocomplete="current-password" /></label>
-        <button id="loginBtn">Se connecter</button>
-        <p id="loginError" class="error"></p>
+  <main class="wrap">
+    <!-- Écran de connexion (masqué automatiquement sur /a/<id>) -->
+    <section id="loginView" class="card center floating">
+      <h1>Connexion</h1>
+      <p class="muted">Protection Civile – Gestion des tenues et prêts</p>
+      <div class="grid-3">
+        <input id="loginEmail" class="input" placeholder="Email" />
+        <input id="loginPass" class="input" type="password" placeholder="Mot de passe" />
+        <button id="loginBtn" class="btn btn-primary" onclick="App.login()">Se connecter</button>
       </div>
+      <div id="loginError" class="alert hidden mt"></div>
+      <p class="mt">Lien prêt public (filtré par antenne) : <span class="badge">/a/&lt;antenna_id&gt;</span></p>
     </section>
 
-    <!-- Dashboard -->
-    <section id="dashboard" class="screen hidden">
-      <div class="grid stats">
-        <div class="stat"><div class="stat-value" id="statStock">0</div><div class="stat-label">Articles en stock</div></div>
-        <div class="stat"><div class="stat-value" id="statLoans">0</div><div class="stat-label">Prêts ouverts</div></div>
-        <div class="stat"><div class="stat-value" id="statVols">0</div><div class="stat-label">Bénévoles</div></div>
-      </div>
+    <!-- VUES (injectées par app.js) -->
+    <section id="dashboard" class="screen hidden"></section>
+    <section id="antennes" class="screen hidden"></section>
+    <section id="stock" class="screen hidden"></section>
+    <section id="benevoles" class="screen hidden"></section>
+    <section id="prets" class="screen hidden"></section>
+    <section id="inventaire" class="screen hidden"></section>
+    <section id="analytics" class="screen hidden"></section>
+    <section id="admin" class="screen hidden"></section>
+    <section id="pretPublic" class="screen hidden"></section>
 
-      <div class="grid two">
-        <div class="card">
-          <h3>Stock par antenne</h3>
-          <canvas id="chartStock"></canvas>
+    <!-- MODAL (overlay + carte opaques) -->
+    <div id="modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div id="modalTitle"></div>
+          <button class="btn btn-ghost" onclick="App.closeModal()">✕</button>
         </div>
-        <div class="card">
-          <h3>Prêts par semaine</h3>
-          <canvas id="chartLoans"></canvas>
-        </div>
+        <div id="modalBody"></div>
       </div>
-    </section>
+    </div>
 
-    <!-- Stock -->
-    <section id="stock" class="screen hidden">
-      <div class="toolbar">
-        <input id="stockSearch" placeholder="Rechercher type / antenne / taille / tags..." />
-        <div class="spacer"></div>
-        <button id="exportStock" class="secondary">Exporter CSV</button>
-      </div>
-
-      <div id="stockTable" class="table-wrapper">
-        <table class="table sortable" data-table="stock">
-          <thead>
-            <tr>
-              <th data-sort="garment_type">Type</th>
-              <th data-sort="antenna">Antenne</th>
-              <th data-sort="size">Taille</th>
-              <th data-sort="quantity" class="right">Qté</th>
-              <th>Tags</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-        <div class="pager">
-          <button data-page="prev" class="secondary small">◀</button>
-          <span class="page-info" id="stockPageInfo">Page 1/1</span>
-          <button data-page="next" class="secondary small">▶</button>
-        </div>
-      </div>
-    </section>
-
-    <!-- Volunteers -->
-    <section id="volunteers" class="screen hidden">
-      <div class="toolbar">
-        <input id="volSearch" placeholder="Rechercher nom / prénom / note..." />
-      </div>
-
-      <div id="volTable" class="table-wrapper">
-        <table class="table sortable" data-table="volunteers">
-          <thead>
-            <tr>
-              <th data-sort="last_name">Nom</th>
-              <th data-sort="first_name">Prénom</th>
-              <th data-sort="note">Note</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-        <div class="pager">
-          <button data-page="prev" class="secondary small">◀</button>
-          <span class="page-info" id="volPageInfo">Page 1/1</span>
-          <button data-page="next" class="secondary small">▶</button>
-        </div>
-      </div>
-    </section>
-
-    <!-- Loans -->
-    <section id="loans" class="screen hidden">
-      <div class="toolbar">
-        <div class="spacer"></div>
-        <button id="exportLoans" class="secondary">Exporter CSV</button>
-      </div>
-      <div id="loansTable" class="table-wrapper">
-        <table class="table sortable" data-table="loans">
-          <thead>
-            <tr>
-              <th data-sort="volunteer">Bénévole</th>
-              <th data-sort="stock">Article</th>
-              <th data-sort="quantity" class="right">Qté</th>
-              <th data-sort="loan_date">Date prêt</th>
-              <th data-sort="return_date">Retour</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- Inventory -->
-    <section id="inventory" class="screen hidden">
-      <div class="card">
-        <h3>Démarrer un inventaire</h3>
-        <label>Antenne ID <input id="invAntennaId" type="number" min="1"></label>
-        <button id="invStart">Démarrer</button>
-      </div>
-      <div id="invArea" class="hidden">
-        <div class="toolbar">
-          <span>Session: <b id="invSession"></b></span>
-          <button id="invClose" class="secondary">Clôturer</button>
-        </div>
-        <table class="table" id="invItems">
-          <thead>
-            <tr><th>Type</th><th>Antenne</th><th>Taille</th><th>Stock</th><th>Compté</th><th>Δ</th></tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- History -->
-    <section id="history" class="screen hidden">
-      <div class="table-wrapper">
-        <table class="table sortable" data-table="history">
-          <thead>
-            <tr>
-              <th data-sort="started_at">Début</th>
-              <th data-sort="closed_at">Fin</th>
-              <th data-sort="antenna">Antenne</th>
-              <th data-sort="user">Utilisateur</th>
-              <th data-sort="total_delta" class="right">Σ|Δ|</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- Admin -->
-    <section id="admin" class="screen hidden">
-      <div class="card">
-        <h3>Administration</h3>
-        <p>Ici : gestion des types, antennes, utilisateurs (inchangé dans cette version démo).</p>
-      </div>
-    </section>
+    <!-- Zone des toasts -->
+    <div id="flash"></div>
   </main>
 
-  <footer class="footer">
-    <small>© Protection Civile – Habillement</small>
-  </footer>
-
-  <!-- JS -->
-  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+  <script src="/static/app.js"></script>
+  <script>
+    // Raccourci ENTER pour le login + init app
+    document.addEventListener('DOMContentLoaded', () => {
+      const onEnter = (e) => { if (e.key === 'Enter') { e.preventDefault(); App.login(); } };
+      const em = document.getElementById('loginEmail');
+      const pw = document.getElementById('loginPass');
+      if (em) em.addEventListener('keydown', onEnter);
+      if (pw) pw.addEventListener('keydown', onEnter);
+      App.init();
+    });
+  </script>
 </body>
 </html>
