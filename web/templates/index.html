@@ -5,9 +5,6 @@
   <title>Protection Civile - Habillement</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="/static/app.css" />
-  <!-- (Optionnel) Leaflet si vous utilisez une carte -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 </head>
 <body>
   <!-- TOPBAR -->
@@ -27,12 +24,12 @@
       <h1>Connexion</h1>
       <p class="muted">Protection Civile – connectez-vous pour accéder à l’interface.</p>
       <div class="grid-2 mt">
-        <input id="loginEmail" type="email" class="input" placeholder="Votre email" />
-        <input id="loginPass" type="password" class="input" placeholder="Mot de passe" />
+        <input id="loginEmail" type="email" class="input" placeholder="Votre email" autocomplete="username" />
+        <input id="loginPass" type="password" class="input" placeholder="Mot de passe" autocomplete="current-password" />
       </div>
       <div id="loginError" class="alert error hidden mt"></div>
       <div class="mt">
-        <button id="loginBtn" class="btn btn-primary" onclick="App.login()">Se connecter</button>
+        <button id="loginBtn" class="btn btn-primary">Se connecter</button>
       </div>
     </section>
 
@@ -76,16 +73,5 @@
   <div id="flash"></div>
 
   <script src="/static/app.js"></script>
-  <script>
-    // Raccourci ENTER pour le login + init app
-    document.addEventListener('DOMContentLoaded', () => {
-      const onEnter = (e) => { if (e.key === 'Enter') { e.preventDefault(); App.login(); } };
-      const em = document.getElementById('loginEmail');
-      const pw = document.getElementById('loginPass');
-      if (em) em.addEventListener('keydown', onEnter);
-      if (pw) pw.addEventListener('keydown', onEnter);
-      App.init();
-    });
-  </script>
 </body>
 </html>
