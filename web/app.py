@@ -3,16 +3,15 @@ import time
 import csv
 from io import StringIO
 from datetime import datetime
-from flask_wtf.csrf import CSRFProtect, generate_csrf, CSRFError
-from flask import make_response
 
-from flask import Flask, jsonify, request, render_template, Response
+from flask import Flask, jsonify, request, render_template, Response, make_response
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import (
     LoginManager, login_user, login_required, logout_user, current_user, UserMixin
 )
 from passlib.hash import bcrypt
 from sqlalchemy import text, or_
+from flask_wtf.csrf import CSRFProtect, generate_csrf, CSRFError
 from sqlalchemy.exc import IntegrityError
 from werkzeug.utils import secure_filename
 
@@ -26,6 +25,12 @@ app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "change")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SESSION_COOKIE_SAMESITE"] = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
 app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", "false").lower() == "true"
+
+# --- CSRF Protection ---
+csrf = CSRFProtect(app)
+app.config.setdefault("WTF_CSRF_TIME_LIMIT", None)
+app.config.setdefault("WTF_CSRF_CHECK_DEFAULT", True)  # applies to unsafe methods
+app.config.setdefault("SESSION_COOKIE_SAMESITE", app.config.get("SESSION_COOKIE_SAMESITE", "Strict"))
 
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
@@ -65,15 +70,16 @@ class StockItem(db.Model):
     size = db.Column(db.String(20))
     quantity = db.Column(db.Integer, default=0)
     # tags stockés en texte (csv)
-    tags_text = db.Column(db.Text, default="")
-    garment_type = db.relationship(GarmentType)
+    tags = db.Column(db.String(255), default="")
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     antenna = db.relationship(Antenna)
+    garment_type = db.relationship(GarmentType)
 
 class Volunteer(db.Model):
     __tablename__ = "volunteers"
     id = db.Column(db.Integer, primary_key=True)
-    first_name = db.Column(db.String(120), index=True, nullable=False)
-    last_name = db.Column(db.String(120), index=True, nullable=False)
+    first_name = db.Column(db.String(80), nullable=False)
+    last_name = db.Column(db.String(80), nullable=False)
     note = db.Column(db.Text, default="")
 
 class Loan(db.Model):
@@ -113,72 +119,24 @@ class InventoryLine(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     session_id = db.Column(db.Integer, db.ForeignKey("inventory_sessions.id"), nullable=False)
     stock_item_id = db.Column(db.Integer, db.ForeignKey("stock_items.id"), nullable=False)
-    previous_qty = db.Column(db.Integer, default=0)
     counted_qty = db.Column(db.Integer, default=0)
-    delta = db.Column(db.Integer, default=0)
     session = db.relationship(InventorySession)
     stock_item = db.relationship(StockItem)
 
 @login_manager.user_loader
-def load_user(uid):
-    return db.session.get(User, int(uid))
-
-def log_action(action: str, entity: str, entity_id: int | None = None, details: str = ""):
-    actor = current_user.email if hasattr(current_user, "is_authenticated") and current_user.is_authenticated else "public"
-    db.session.add(Log(actor=actor, action=action, entity=entity, entity_id=entity_id, details=details))
-
-# ---------------------------------------------------------------------
-# DB bootstrapping
-# ---------------------------------------------------------------------
-def wait_for_db(max_tries: int = 60, delay: float = 1.0):
-    for _ in range(max_tries):
-        try:
-            db.session.execute(text("SELECT 1"))
-            return
-        except Exception:
-            time.sleep(delay)
-    raise RuntimeError("Base de données indisponible après attente")
-
-with app.app_context():
-    wait_for_db()
-    db.create_all()
-    # Migrations idempotentes
-    try:
-        db.session.execute(text("ALTER TABLE stock_items ADD COLUMN IF NOT EXISTS tags_text TEXT DEFAULT ''"))
-        db.session.execute(text("ALTER TABLE antennas ADD COLUMN IF NOT EXISTS low_stock_threshold INTEGER"))
-        db.session.execute(text("ALTER TABLE antennas ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION"))
-        db.session.execute(text("ALTER TABLE antennas ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION"))
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-    # Admin par défaut
-    email = os.environ.get("ADMIN_EMAIL", "admin@pc.fr")
-    if not User.query.filter_by(email=email).first():
-        db.session.add(
-            User(
-                email=email,
-                name=os.environ.get("ADMIN_NAME", "Admin"),
-                pwd_hash=bcrypt.hash(os.environ.get("ADMIN_PASSWORD", "admin123")),
-                role="admin",
-            )
-        )
-        db.session.commit()
+def load_user(user_id):
+    return db.session.get(User, int(user_id))
 
 # ---------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------
-def tags_to_text(tags):
-    if not tags: return ""
-    if isinstance(tags, str):
-        return ",".join([t.strip() for t in tags.split(",") if t.strip()])
-    return ",".join([str(t).strip() for t in tags if str(t).strip()])
-
-def text_to_tags(txt):
-    if not txt: return []
-    return [t.strip() for t in str(txt).split(",") if t.strip()]
+def audit(action, entity, entity_id, details=""):
+    actor = current_user.email if current_user.is_authenticated else "public"
+    db.session.add(Log(actor=actor, action=action, entity=entity, entity_id=entity_id, details=details))
+    db.session.commit()
 
 # ---------------------------------------------------------------------
-# Routes de base
+# Routes Front
 # ---------------------------------------------------------------------
 @app.route("/")
 @app.route("/a/<int:antenna_id>")
@@ -193,9 +151,36 @@ def healthz():
     except Exception as e:
         return f"db error: {e}", 500
 
+# -- CSRF cookie + handler d'erreur JSON --
+@app.after_request
+def set_csrf_cookie(resp):
+    try:
+        token = generate_csrf()
+        resp.set_cookie(
+            "XSRF-TOKEN",
+            token,
+            secure=app.config.get("SESSION_COOKIE_SECURE", False),
+            httponly=False,
+            samesite=app.config.get("SESSION_COOKIE_SAMESITE", "Strict"),
+            path="/"
+        )
+    finally:
+        return resp
+
+@app.errorhandler(CSRFError)
+def handle_csrf_error(e):
+    return jsonify({"ok": False, "error": "CSRF: " + (e.description or "token invalide")}), 400
+
 # ---------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------
+@app.get("/api/me")
+def me():
+    if current_user.is_authenticated:
+        u = current_user
+        return jsonify({"ok": True, "user": {"id": u.id, "email": u.email, "name": u.name, "role": u.role}})
+    return jsonify({"ok": False}), 401
+
 @app.post("/api/login")
 def login_api():
     d = request.get_json() or {}
@@ -213,70 +198,48 @@ def logout_api():
     logout_user()
     return jsonify({"ok": True})
 
-@app.get("/api/me")
-def me():
-    if current_user.is_authenticated:
-        return jsonify(
-            {"ok": True, "user": {"id": current_user.id, "email": current_user.email, "name": current_user.name, "role": current_user.role}}
-        )
-    return jsonify({"ok": False})
-
-# ---------------------------------------------------------------------
-# Stats
-# ---------------------------------------------------------------------
-@app.get("/api/stats")
-@login_required
-def stats():
-    stock_total = db.session.query(db.func.coalesce(db.func.sum(StockItem.quantity), 0)).scalar()
-    loans_open = Loan.query.filter(Loan.returned_at.is_(None)).count()
-    volunteers = Volunteer.query.count()
-    return jsonify({"stock_total": stock_total, "prets_ouverts": loans_open, "benevoles": volunteers})
-
 # ---------------------------------------------------------------------
 # Antennas
 # ---------------------------------------------------------------------
 @app.get("/api/antennas")
 @login_required
 def antennas_list():
-    items = Antenna.query.order_by(Antenna.name).all()
-    return jsonify([{"id": a.id, "name": a.name, "address": a.address, "low_stock_threshold": a.low_stock_threshold, "lat": a.lat, "lng": a.lng} for a in items])
+    res = []
+    for a in Antenna.query.order_by(Antenna.name).all():
+        res.append({"id": a.id, "name": a.name, "address": a.address, "low_stock_threshold": a.low_stock_threshold})
+    return jsonify(res)
 
 @app.post("/api/antennas")
 @login_required
 def antennas_add():
     d = request.get_json() or {}
-    name = d.get("name", "").strip()
+    name = (d.get("name") or "").strip()
     if not name:
         return jsonify({"ok": False, "error": "Nom requis"}), 400
-    if Antenna.query.filter_by(name=name).first():
-        return jsonify({"ok": False, "error": "Cette antenne existe déjà"}), 409
-    a = Antenna(name=name, address=d.get("address", "").strip(), low_stock_threshold=d.get("low_stock_threshold"), lat=d.get("lat"), lng=d.get("lng"))
-    db.session.add(a)
-    db.session.commit()
-    return jsonify({"ok": True, "id": a.id})
+    a = Antenna(name=name, address=d.get("address", "").strip())
+    db.session.add(a); db.session.commit()
+    audit("antenna_add", "antenna", a.id, a.name)
+    return jsonify({"id": a.id})
 
 @app.put("/api/antennas/<int:ant_id>")
 @login_required
 def antennas_update(ant_id):
     d = request.get_json() or {}
-    a: Antenna = db.session.get(Antenna, ant_id)
+    a = db.session.get(Antenna, ant_id)
     if not a:
         return jsonify({"ok": False}), 404
-    new_name = d.get("name", a.name).strip()
-    if new_name != a.name and Antenna.query.filter_by(name=new_name).first():
-        return jsonify({"ok": False, "error": "Nom d'antenne déjà utilisé"}), 409
-    a.name = new_name
+    a.name = d.get("name", a.name).strip()
     a.address = d.get("address", a.address).strip()
-    a.low_stock_threshold = d.get("low_stock_threshold") if "low_stock_threshold" in d else a.low_stock_threshold
-    a.lat = d.get("lat") if "lat" in d else a.lat
-    a.lng = d.get("lng") if "lng" in d else a.lng
+    if "low_stock_threshold" in d:
+        a.low_stock_threshold = d.get("low_stock_threshold")
     db.session.commit()
+    audit("antenna_update", "antenna", a.id, a.name)
     return jsonify({"ok": True})
 
 @app.delete("/api/antennas/<int:ant_id>")
 @login_required
 def antennas_delete(ant_id):
-    a: Antenna = db.session.get(Antenna, ant_id)
+    a = db.session.get(Antenna, ant_id)
     if not a:
         return jsonify({"ok": False}), 404
     if StockItem.query.filter_by(antenna_id=ant_id).first():
@@ -307,15 +270,9 @@ def users_add():
         return jsonify({"ok": False, "error": "email et mot de passe requis"}), 400
     if User.query.filter_by(email=email).first():
         return jsonify({"ok": False, "error": "email déjà utilisé"}), 409
-    u = User(
-        email=email,
-        name=d.get("name", "").strip() or email,
-        pwd_hash=bcrypt.hash(d.get("password")),
-        role=d.get("role", "admin"),
-    )
-    db.session.add(u)
-    db.session.commit()
-    return jsonify({"ok": True, "id": u.id})
+    u = User(email=email, name=d.get("name", "").strip() or email, pwd_hash=bcrypt.hash(d["password"]))
+    db.session.add(u); db.session.commit()
+    return jsonify({"id": u.id})
 
 @app.put("/api/users/<int:user_id>")
 @login_required
@@ -324,8 +281,7 @@ def users_update(user_id):
     u = db.session.get(User, user_id)
     if not u:
         return jsonify({"ok": False}), 404
-    u.name = d.get("name", u.name)
-    u.role = d.get("role", u.role)
+    u.name = d.get("name", u.name).strip()
     if d.get("password"):
         u.pwd_hash = bcrypt.hash(d["password"])
     db.session.commit()
@@ -337,40 +293,29 @@ def users_delete(user_id):
     u = db.session.get(User, user_id)
     if not u:
         return jsonify({"ok": False}), 404
-    if current_user.id == u.id:
+    if u.id == current_user.id:
         return jsonify({"ok": False, "error": "Impossible de supprimer votre propre compte."}), 400
-    # Vérifie si l'utilisateur est référencé dans des inventaires
-    if InventorySession.query.filter_by(user_id=user_id).first():
-        return jsonify({"ok": False, "error": "Impossible : l'utilisateur est lié à des inventaires."}), 400
-    try:
-        db.session.delete(u)
-        db.session.commit()
-    except IntegrityError:
-        db.session.rollback()
-        return jsonify({"ok": False, "error": "Suppression refusée (contraintes liées)."}), 400
+    db.session.delete(u)
+    db.session.commit()
     return jsonify({"ok": True})
 
 # ---------------------------------------------------------------------
-# Garment Types (CRUD + suppression)
+# Types & Stock
 # ---------------------------------------------------------------------
 @app.get("/api/types")
 @login_required
 def types_list():
-    items = GarmentType.query.order_by(GarmentType.label).all()
-    return jsonify([{"id": t.id, "label": t.label, "has_size": t.has_size} for t in items])
+    return jsonify([{"id": t.id, "label": t.label, "has_size": t.has_size} for t in GarmentType.query.order_by(GarmentType.label).all()])
 
 @app.post("/api/types")
 @login_required
 def types_add():
     d = request.get_json() or {}
-    label = d.get("label", "").strip()
+    label = (d.get("label") or "").strip()
     if not label:
-        return jsonify({"ok": False, "error": "label requis"}), 400
-    if GarmentType.query.filter_by(label=label).first():
-        return jsonify({"ok": False, "error": "Ce type existe déjà"}), 409
+        return jsonify({"ok": False, "error": "Label requis"}), 400
     t = GarmentType(label=label, has_size=bool(d.get("has_size", True)))
-    db.session.add(t)
-    db.session.commit()
+    db.session.add(t); db.session.commit()
     return jsonify({"id": t.id})
 
 @app.delete("/api/types/<int:type_id>")
@@ -380,112 +325,76 @@ def types_delete(type_id):
     if not t:
         return jsonify({"ok": False}), 404
     if StockItem.query.filter_by(garment_type_id=type_id).first():
-        return jsonify({"ok": False, "error": "Impossible : du stock existe pour ce type."}), 400
-    try:
-        db.session.delete(t)
-        db.session.commit()
-    except IntegrityError:
-        db.session.rollback()
-        return jsonify({"ok": False, "error": "Suppression refusée (contraintes liées)."}), 400
+        return jsonify({"ok": False, "error": "Ce type est utilisé par des articles."}), 400
+    db.session.delete(t); db.session.commit()
     return jsonify({"ok": True})
 
-# ---------------------------------------------------------------------
-# Stock (tags)
-# ---------------------------------------------------------------------
 @app.get("/api/stock")
 @login_required
 def stock_list():
+    ant = request.args.get("antenna_id", type=int)
+    typ = request.args.get("type_id", type=int)
+    size = request.args.get("size")
+    q = StockItem.query
+    if ant: q = q.filter(StockItem.antenna_id == ant)
+    if typ: q = q.filter(StockItem.garment_type_id == typ)
+    if size: q = q.filter(StockItem.size == size)
+    items = q.order_by(StockItem.id.desc()).all()
     out = []
-    qry = StockItem.query
-    t = request.args.get("type_id", type=int)
-    a = request.args.get("antenna_id", type=int)
-    if t:
-        qry = qry.filter(StockItem.garment_type_id == t)
-    if a:
-        qry = qry.filter(StockItem.antenna_id == a)
-    for s in qry.all():
-        out.append(
-            {
-                "id": s.id,
-                "garment_type_id": s.garment_type_id,
-                "garment_type": s.garment_type.label,
-                "antenna_id": s.antenna_id,
-                "antenna": s.antenna.name,
-                "size": s.size,
-                "quantity": s.quantity,
-                "tags": text_to_tags(s.tags_text),
-            }
-        )
+    for s in items:
+        out.append({
+            "id": s.id, "antenna_id": s.antenna_id, "antenna": s.antenna.name if s.antenna else s.antenna_id,
+            "garment_type_id": s.garment_type_id, "garment_type": s.garment_type.label if s.garment_type else s.garment_type_id,
+            "size": s.size, "quantity": s.quantity, "tags": s.tags or ""
+        })
     return jsonify(out)
 
 @app.post("/api/stock")
 @login_required
 def stock_add():
     d = request.get_json() or {}
-    t = int(d.get("garment_type_id"))
-    a = int(d.get("antenna_id"))
-    size = d.get("size")
-    qty = int(d.get("quantity") or 0)
-    tags = tags_to_text(d.get("tags"))
-    if qty <= 0:
-        return jsonify({"ok": False, "error": "quantité > 0 requise"}), 400
-    item = StockItem.query.filter_by(garment_type_id=t, antenna_id=a, size=size).first()
-    if item:
-        item.quantity += qty
-        # fusion des tags
-        merged = set(text_to_tags(item.tags_text)) | set(text_to_tags(tags))
-        item.tags_text = tags_to_text(list(merged))
-    else:
-        item = StockItem(garment_type_id=t, antenna_id=a, size=size, quantity=qty, tags_text=tags)
-        db.session.add(item)
-    log_action("stock.add", "stock", getattr(item, "id", None), f"+{qty} type={t} ant={a} size={size}")
-    db.session.commit()
-    return jsonify({"id": item.id})
+    s = StockItem(
+        garment_type_id=d.get("garment_type_id"),
+        antenna_id=d.get("antenna_id"),
+        size=d.get("size") or None,
+        quantity=int(d.get("quantity") or 0),
+        tags=",".join([t.strip() for t in (d.get("tags") or "").split(",") if t.strip()])
+    )
+    db.session.add(s); db.session.commit()
+    audit("stock_add", "stock_item", s.id, f"qty={s.quantity}")
+    return jsonify({"id": s.id})
 
 @app.put("/api/stock/<int:item_id>")
 @login_required
 def stock_update(item_id):
     d = request.get_json() or {}
     s = db.session.get(StockItem, item_id)
-    if not s:
-        return jsonify({"ok": False}), 404
-    before = s.quantity
-    s.garment_type_id = int(d.get("garment_type_id", s.garment_type_id))
-    s.antenna_id = int(d.get("antenna_id", s.antenna_id))
-    s.size = d.get("size", s.size)
-    if "quantity" in d:
-        s.quantity = int(d["quantity"])
-    if "tags" in d:
-        s.tags_text = tags_to_text(d.get("tags"))
+    if not s: return jsonify({"ok": False}), 404
+    s.garment_type_id = d.get("garment_type_id", s.garment_type_id)
+    s.antenna_id = d.get("antenna_id", s.antenna_id)
+    s.size = d.get("size", s.size) or None
+    if "quantity" in d: s.quantity = int(d.get("quantity") or 0)
+    if "tags" in d: s.tags = ",".join([t.strip() for t in (d.get("tags") or "").split(",") if t.strip()])
     db.session.commit()
-    log_action("stock.update", "stock", item_id, f"{before}->{s.quantity}")
+    audit("stock_update", "stock_item", s.id, f"qty={s.quantity}")
     return jsonify({"ok": True})
 
 @app.delete("/api/stock/<int:item_id>")
 @login_required
 def stock_delete(item_id):
     s = db.session.get(StockItem, item_id)
-    if not s:
-        return jsonify({"ok": False}), 404
-    # Bloque si des prêts existent (ouverts ou historiques)
-    if Loan.query.filter_by(stock_item_id=item_id).first():
-        return jsonify({"ok": False, "error": "Impossible : cet article a des prêts associés."}), 400
-    try:
-        db.session.delete(s)
-        db.session.commit()
-    except IntegrityError:
-        db.session.rollback()
-        return jsonify({"ok": False, "error": "Suppression refusée (contraintes liées)."}), 400
-    log_action("stock.delete", "stock", item_id, "delete")
+    if not s: return jsonify({"ok": False}), 404
+    db.session.delete(s); db.session.commit()
+    audit("stock_delete", "stock_item", item_id, "")
     return jsonify({"ok": True})
 
 # ---------------------------------------------------------------------
-# Volunteers (liste + recherche + import CSV + CRUD)
+# Volunteers
 # ---------------------------------------------------------------------
 @app.get("/api/volunteers")
 @login_required
 def volunteers_list():
-    q = request.args.get("q", "").strip()
+    q = (request.args.get("q") or "").strip()
     qry = Volunteer.query
     if q:
         q_lower = f"%{q.lower()}%"
@@ -527,184 +436,80 @@ def volunteers_update(vol_id):
 @login_required
 def volunteers_delete(vol_id):
     v = db.session.get(Volunteer, vol_id)
-    if not v:
-        return jsonify({"ok": False}), 404
-    # Bloque si des prêts sont liés
-    if Loan.query.filter_by(volunteer_id=vol_id).first():
-        return jsonify({"ok": False, "error": "Impossible : ce bénévole a des prêts associés."}), 400
-    try:
-        db.session.delete(v)
-        db.session.commit()
-    except IntegrityError:
-        db.session.rollback()
-        return jsonify({"ok": False, "error": "Suppression refusée (contraintes liées)."}), 400
+    if not v: return jsonify({"ok": False}), 404
+    if Loan.query.filter(Loan.volunteer_id == vol_id, Loan.returned_at.is_(None)).first():
+        return jsonify({"ok": False, "error": "Bénévole avec prêt en cours"}), 400
+    db.session.delete(v); db.session.commit()
     return jsonify({"ok": True})
 
-# Import CSV
 @app.get("/api/volunteers/template.csv")
 @login_required
 def volunteers_template_csv():
     si = StringIO()
-    w = csv.writer(si, delimiter=';')
-    w.writerow(["Nom", "Prénom", "Note"])
-    w.writerow(["DUPONT", "Jean", "Taille M"])
-    w.writerow(["MARTIN", "Léa", ""])
-    data = si.getvalue().encode("utf-8-sig")
-    return Response(
-        data, mimetype="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="benevoles_modele.csv"'}
-    )
+    w = csv.writer(si, lineterminator="\n")
+    w.writerow(["first_name", "last_name", "note"])
+    w.writerow(["Jean", "DUPONT", "Poste / taille etc."])
+    return Response(si.getvalue(), mimetype="text/csv")
 
 @app.post("/api/volunteers/import")
 @login_required
-def volunteers_import_csv():
-    if "file" not in request.files:
-        return jsonify({"ok": False, "error": "Aucun fichier fourni"}), 400
-    f = request.files["file"]
-    filename = secure_filename(f.filename or "import.csv")
-    raw = f.read()
+def volunteers_import():
+    f = request.files.get("file")
+    if not f: return jsonify({"ok": False, "error": "Fichier requis"}), 400
+    count = 0
     try:
-        text_data = raw.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        text_data = raw.decode("latin-1")
-
-    try:
-        from csv import Sniffer
-        dialect = Sniffer().sniff(text_data.splitlines()[0])
-        delim = dialect.delimiter
-    except Exception:
-        delim = ";" if text_data.count(";") >= text_data.count(",") else ","
-
-    reader = csv.reader(StringIO(text_data), delimiter=delim)
-    rows = list(reader)
-    if not rows:
-        return jsonify({"ok": False, "error": "Fichier vide"}), 400
-
-    header = [h.strip().lower() for h in rows[0]]
-
-    def _col(*names):
-        for n in names:
-            if n in header:
-                return header.index(n)
-        return None
-
-    idx_nom = _col("nom", "lastname", "last name")
-    idx_pren = _col("prénom", "prenom", "firstname", "first name")
-    idx_note = _col("note", "infos", "info")
-    if idx_nom is None or idx_pren is None:
-        return jsonify({"ok": False, "error": "Colonnes requises: Nom, Prénom"}), 400
-
-    existing = set((v.last_name.strip().lower(), v.first_name.strip().lower()) for v in Volunteer.query.all())
-    added = 0
-    skipped = 0
-    for r in rows[1:]:
-        if not r or all(not c.strip() for c in r):
-            continue
-        try:
-            ln = (r[idx_nom] or "").strip()
-            fn = (r[idx_pren] or "").strip()
-        except IndexError:
-            continue
-        if not ln or not fn:
-            continue
-        key = (ln.lower(), fn.lower())
-        if key in existing:
-            skipped += 1
-            continue
-        note = ""
-        if idx_note is not None and idx_note < len(r):
-            note = (r[idx_note] or "").strip()
-        db.session.add(Volunteer(first_name=fn, last_name=ln, note=note))
-        existing.add(key)
-        added += 1
-
-    db.session.commit()
-    return jsonify({"ok": True, "filename": filename, "added": added, "skipped": skipped, "total": added + skipped})
+        content = f.read().decode("utf-8", errors="ignore").splitlines()
+        r = csv.DictReader(content)
+        for row in r:
+            fn = (row.get("first_name") or "").strip()
+            ln = (row.get("last_name") or "").strip()
+            note = (row.get("note") or "").strip()
+            if not fn or not ln: continue
+            if not Volunteer.query.filter_by(first_name=fn, last_name=ln).first():
+                db.session.add(Volunteer(first_name=fn, last_name=ln, note=note)); count += 1
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": str(e)}), 400
+    return jsonify({"ok": True, "imported": count})
 
 # ---------------------------------------------------------------------
 # Loans
 # ---------------------------------------------------------------------
-@app.get("/api/volunteers/<int:vol_id>/loans")
-@login_required
-def volunteers_loans(vol_id):
-    res = []
-    for l in Loan.query.filter(Loan.volunteer_id == vol_id, Loan.returned_at.is_(None)).all():
-        res.append(
-            {
-                "id": l.id,
-                "qty": l.qty,
-                "since": l.created_at.isoformat(),
-                "type": l.stock_item.garment_type.label,
-                "size": l.stock_item.size,
-                "antenna": l.stock_item.antenna.name,
-            }
-        )
-    return jsonify(res)
-
 @app.get("/api/loans/open")
 @login_required
 def loans_open():
     res = []
     for l in Loan.query.filter(Loan.returned_at.is_(None)).all():
-        res.append(
-            {
-                "id": l.id,
-                "qty": l.qty,
-                "since": l.created_at.isoformat(),
-                "volunteer": f"{l.volunteer.last_name} {l.volunteer.first_name}",
-                "type": l.stock_item.garment_type.label,
-                "size": l.stock_item.size,
-                "antenna": l.stock_item.antenna.name,
-            }
-        )
+        res.append({
+            "id": l.id, "volunteer_id": l.volunteer_id,
+            "volunteer": f"{l.volunteer.last_name} {l.volunteer.first_name}",
+            "type": l.stock_item.garment_type.label if l.stock_item and l.stock_item.garment_type else l.stock_item.garment_type_id,
+            "size": l.stock_item.size if l.stock_item else "",
+            "qty": l.qty, "since": l.created_at.isoformat()
+        })
     return jsonify(res)
 
 @app.post("/api/loans/return/<int:loan_id>")
 @login_required
 def loan_return(loan_id):
     l = db.session.get(Loan, loan_id)
-    if not l or l.returned_at:
+    if not l or l.returned_at is not None:
         return jsonify({"ok": False}), 404
+    s = db.session.get(StockItem, l.stock_item_id)
+    if s: s.quantity += l.qty
     l.returned_at = datetime.utcnow()
-    item = db.session.get(StockItem, l.stock_item_id)
-    item.quantity += l.qty
     db.session.commit()
-    log_action("loan.return", "loan", loan_id, f"+{l.qty} to stock_item={l.stock_item_id}")
+    audit("loan_return", "loan", loan_id, "")
     return jsonify({"ok": True})
 
 # ---------------------------------------------------------------------
-# Public (QR) + filtres
+# Public (page prêt /a/<id>)
 # ---------------------------------------------------------------------
-@app.get("/api/public/volunteer")
-def public_find():
-    fn = (request.args.get("first_name", "")).strip()
-    ln = (request.args.get("last_name", "")).strip()
-    v = Volunteer.query.filter(
-        db.func.lower(Volunteer.first_name) == fn.lower(),
-        db.func.lower(Volunteer.last_name) == ln.lower()
-    ).first()
-    if not v: return jsonify({"ok": False}), 404
-    return jsonify({"ok": True, "id": v.id, "first_name": v.first_name, "last_name": v.last_name})
-
-@app.get("/api/public/stock")
-def public_stock():
-    antenna_id = request.args.get("antenna_id", type=int)
-    type_id = request.args.get("type_id", type=int)
-    size = request.args.get("size", type=str)
-    q = StockItem.query.filter(StockItem.quantity > 0)
-    if antenna_id: q = q.filter(StockItem.antenna_id == antenna_id)
-    if type_id: q = q.filter(StockItem.garment_type_id == type_id)
-    if size: q = q.filter(db.func.coalesce(StockItem.size, "") == size.strip())
-    res = []
-    for s in q.all():
-        res.append({"id": s.id, "type": s.garment_type.label, "type_id": s.garment_type_id, "size": s.size, "antenna": s.antenna.name, "antenna_id": s.antenna_id, "quantity": s.quantity})
-    return jsonify(res)
-
 @app.get("/api/public/types")
 def public_types():
-    """Liste des types disponibles (option antenne) pour alimenter le filtre public."""
     antenna_id = request.args.get("antenna_id", type=int)
-    q = db.session.query(StockItem.garment_type_id, GarmentType.label).join(GarmentType, StockItem.garment_type_id == GarmentType.id).filter(StockItem.quantity > 0)
+    q = db.session.query(StockItem.garment_type_id, GarmentType.label).join(GarmentType).filter(StockItem.quantity > 0)
     if antenna_id:
         q = q.filter(StockItem.antenna_id == antenna_id)
     seen = {}
@@ -738,28 +543,30 @@ def public_loans():
 @app.post("/api/public/return/<int:loan_id>")
 def public_return(loan_id):
     l = db.session.get(Loan, loan_id)
-    if not l or l.returned_at: return jsonify({"ok": False}), 404
+    if not l or l.returned_at is not None:
+        return jsonify({"ok": False}), 404
+    s = db.session.get(StockItem, l.stock_item_id)
+    if s: s.quantity += l.qty
     l.returned_at = datetime.utcnow()
-    item = db.session.get(StockItem, l.stock_item_id)
-    item.quantity += l.qty
     db.session.commit()
-    log_action("loan.return.public", "loan", loan_id, f"+{l.qty} to stock_item={l.stock_item_id}")
+    audit("public_return", "loan", loan_id, "")
     return jsonify({"ok": True})
 
 @app.post("/api/public/loan")
-def public_loan():
+def public_borrow():
     d = request.get_json() or {}
-    v_id = int(d.get("volunteer_id"))
-    s_id = int(d.get("stock_item_id"))
+    vol_id = d.get("volunteer_id")
+    stock_id = d.get("stock_item_id")
     qty = int(d.get("qty") or 1)
-    item = db.session.get(StockItem, s_id)
-    if not item or item.quantity < qty:
+    v = db.session.get(Volunteer, vol_id)
+    s = db.session.get(StockItem, stock_id)
+    if not v or not s or s.quantity < qty:
         return jsonify({"ok": False, "error": "Stock insuffisant"}), 400
-    item.quantity -= qty
-    loan = Loan(volunteer_id=v_id, stock_item_id=s_id, qty=qty)
-    db.session.add(loan); db.session.commit()
-    log_action("loan.create", "loan", loan.id, f"-{qty} from stock_item={s_id} by volunteer={v_id}")
-    return jsonify({"ok": True})
+    s.quantity -= qty
+    l = Loan(volunteer_id=v.id, stock_item_id=s.id, qty=qty)
+    db.session.add(l); db.session.commit()
+    audit("public_loan", "loan", l.id, f"vol={v.id}, item={s.id}, qty={qty}")
+    return jsonify({"ok": True, "loan_id": l.id})
 
 # ---------------------------------------------------------------------
 # Inventaire
@@ -768,54 +575,94 @@ def public_loan():
 @login_required
 def inventory_start():
     d = request.get_json() or {}
-    ant = int(d.get("antenna_id") or 0)
-    if not ant: return jsonify({"ok": False, "error": "antenna_id requis"}), 400
-    sess = InventorySession(antenna_id=ant, user_id=current_user.id)
-    db.session.add(sess); db.session.commit()
-    log_action("inventory.start", "inventory", sess.id, f"antenna={ant}")
-    return jsonify({"id": sess.id})
+    ant = d.get("antenna_id")
+    if not ant: return jsonify({"ok": False, "error": "Antenne requise"}), 400
+    s = InventorySession(antenna_id=ant, user_id=current_user.id)
+    db.session.add(s); db.session.commit()
+    return jsonify({"id": s.id})
 
-@app.get("/api/inventory/<int:sid>/items")
+@app.get("/api/inventory/<int:sid>")
 @login_required
-def inventory_items(sid):
-    sess = db.session.get(InventorySession, sid)
-    if not sess or sess.closed_at: return jsonify({"ok": False}), 404
-    rows = []
-    for s in StockItem.query.filter_by(antenna_id=sess.antenna_id).all():
-        rows.append({"stock_item_id": s.id, "type": s.garment_type.label, "size": s.size, "quantity": s.quantity})
-    return jsonify({"antenna": sess.antenna.name, "rows": rows})
+def inventory_lines(sid):
+    s = db.session.get(InventorySession, sid)
+    if not s or s.closed_at: return jsonify({"ok": False}), 404
+    stock = StockItem.query.filter_by(antenna_id=s.antenna_id).all()
+    out = [{"id": i.id, "type": i.garment_type.label, "size": i.size, "quantity": i.quantity} for i in stock]
+    return jsonify(out)
 
 @app.post("/api/inventory/<int:sid>/count")
 @login_required
 def inventory_count(sid):
     d = request.get_json() or {}
-    stock_id = int(d.get("stock_item_id"))
-    counted = int(d.get("counted_qty") or 0)
-    sess = db.session.get(InventorySession, sid)
-    s = db.session.get(StockItem, stock_id)
-    if not sess or not s or sess.closed_at: return jsonify({"ok": False}), 404
+    s = db.session.get(InventorySession, sid)
+    if not s or s.closed_at: return jsonify({"ok": False}), 404
+    stock_id = d.get("stock_item_id")
+    counted_qty = int(d.get("counted_qty") or 0)
     line = InventoryLine.query.filter_by(session_id=sid, stock_item_id=stock_id).first()
     if not line:
-        line = InventoryLine(session_id=sid, stock_item_id=stock_id, previous_qty=s.quantity)
+        line = InventoryLine(session_id=sid, stock_item_id=stock_id, counted_qty=counted_qty)
         db.session.add(line)
-    line.counted_qty = counted; line.delta = counted - line.previous_qty
+    else:
+        line.counted_qty = counted_qty
     db.session.commit()
     return jsonify({"ok": True})
 
 @app.post("/api/inventory/<int:sid>/close")
 @login_required
 def inventory_close(sid):
-    sess = db.session.get(InventorySession, sid)
-    if not sess or sess.closed_at: return jsonify({"ok": False}), 404
-    lines = InventoryLine.query.filter_by(session_id=sid).all()
-    for ln in lines:
-        item = db.session.get(StockItem, ln.stock_item_id)
-        if item:
-            item.quantity = ln.counted_qty
-    sess.closed_at = datetime.utcnow()
-    log_action("inventory.close", "inventory", sid, f"lines={len(lines)}")
+    s = db.session.get(InventorySession, sid)
+    if not s or s.closed_at: return jsonify({"ok": False}), 404
+    s.closed_at = datetime.utcnow()
     db.session.commit()
+    audit("inventory_close", "inventory_session", sid, "")
     return jsonify({"ok": True})
+
+# ---------------------------------------------------------------------
+# Stats (utilisé par le dashboard existant)
+# ---------------------------------------------------------------------
+@app.get("/api/stats")
+@login_required
+def stats():
+    total_stock = db.session.query(db.func.coalesce(db.func.sum(StockItem.quantity), 0)).scalar() or 0
+    prets_ouverts = db.session.query(db.func.count(Loan.id)).filter(Loan.returned_at.is_(None)).scalar() or 0
+    benevoles = db.session.query(db.func.count(db.func.distinct(Volunteer.id))).scalar() or 0
+    return jsonify({"stock_total": int(total_stock), "prets_ouverts": int(prets_ouverts), "benevoles": int(benevoles)})
+
+# ---------------------------------------------------------------------
+# Export stock CSV (UTF-8 BOM; sep=;)
+# ---------------------------------------------------------------------
+@app.get("/api/stock/export.csv")
+@login_required
+def stock_export_csv():
+    # Query join optional relations
+    q = db.session.query(StockItem)
+    # Build CSV
+    sio = StringIO()
+    writer = csv.writer(sio, delimiter=';', lineterminator='\n')
+    writer.writerow(["Antenne", "Type", "Taille", "Quantité", "Tags", "Dernière mise à jour"])
+    # attempt to resolve names if relationships exist
+    for s in q.all():
+        antenna = getattr(getattr(s, "antenna", None), "name", None)
+        if antenna is None:
+            # fallback by looking up antenna table
+            ant = db.session.get(Antenna, getattr(s, "antenna_id", None))
+            antenna = ant.name if ant else ""
+        gtype = getattr(getattr(s, "garment_type", None), "label", None)
+        if gtype is None:
+            gt = db.session.get(GarmentType, getattr(s, "garment_type_id", None))
+            gtype = (gt.label if gt else str(getattr(s, "garment_type_id", "")))
+        size = getattr(s, "size", "") or ""
+        qty = getattr(s, "quantity", 0) or 0
+        tags = getattr(s, "tags", "") or ""
+        updated = getattr(s, "updated_at", None)
+        updated_str = updated.isoformat() if updated else ""
+        writer.writerow([antenna, gtype, size, qty, tags, updated_str])
+    data = sio.getvalue()
+    data = "\ufeff" + data  # BOM for Excel
+    resp = make_response(data)
+    resp.headers["Content-Type"] = "text/csv; charset=utf-8"
+    resp.headers["Content-Disposition"] = f"attachment; filename=stock_{datetime.utcnow().strftime('%Y-%m-%d')}.csv"
+    return resp
 
 # ---------------------------------------------------------------------
 # Logs
