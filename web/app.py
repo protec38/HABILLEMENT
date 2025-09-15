@@ -4,7 +4,7 @@ import csv
 from io import StringIO
 from datetime import datetime
 
-from flask import Flask, jsonify, request, render_template, Response
+from flask import Flask, jsonify, request, render_template, Response, redirect, url_for
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import (
     LoginManager, login_user, login_required, logout_user, current_user, UserMixin
@@ -143,17 +143,34 @@ with app.app_context():
         db.session.commit()
 
 # ---------------------------------------------------------------------
-# Helpers
+# Auth: login / logout
 # ---------------------------------------------------------------------
-def tags_to_text(tags):
-    if not tags: return ""
-    if isinstance(tags, str):
-        return ",".join([t.strip() for t in tags.split(",") if t.strip()])
-    return ",".join([str(t).strip() for t in tags if str(t).strip()])
+@app.post("/api/login")
+def api_login():
+    """Connexion par email/mot de passe (JSON: {email, password})"""
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+    if not email or not password:
+        return jsonify({"ok": False, "error": "Email et mot de passe requis"}), 400
 
-def text_to_tags(txt):
-    if not txt: return []
-    return [t.strip() for t in str(txt).split(",") if t.strip()]
+    user = User.query.filter_by(email=email).first()
+    if not user or not bcrypt.verify(password, user.pwd_hash):
+        return jsonify({"ok": False, "error": "Identifiants invalides"}), 401
+
+    login_user(user)
+    log_action("auth.login", "user", user.id, user.email)
+    return jsonify({"ok": True})
+
+@app.get("/api/logout")
+@login_required
+def api_logout():
+    uid = current_user.id
+    email = current_user.email
+    logout_user()
+    log_action("auth.logout", "user", uid, email)
+    # Redirige côté client vers la page d'accueil
+    return redirect(url_for("index"))
 
 # ---------------------------------------------------------------------
 # Routes de base
