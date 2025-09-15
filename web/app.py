@@ -14,10 +14,6 @@ from sqlalchemy import text, or_
 from sqlalchemy.exc import IntegrityError
 from werkzeug.utils import secure_filename
 
-# ===== CSRF =====
-# Ajout pour activer la protection CSRF via cookie + header
-from flask_wtf.csrf import CSRFProtect, generate_csrf, CSRFError
-
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
 # ---------------------------------------------------------------------
@@ -28,12 +24,6 @@ app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "change")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SESSION_COOKIE_SAMESITE"] = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
 app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", "false").lower() == "true"
-
-# ---- CSRF protection ----
-csrf = CSRFProtect(app)
-# pas d’expiration stricte (utile pour SPA)
-app.config.setdefault("WTF_CSRF_TIME_LIMIT", None)
-app.config.setdefault("WTF_CSRF_CHECK_DEFAULT", True)
 
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
@@ -201,26 +191,6 @@ def healthz():
     except Exception as e:
         return f"db error: {e}", 500
 
-# ===== CSRF : set cookie à chaque réponse + handler d’erreur JSON =====
-@app.after_request
-def set_csrf_cookie(resp):
-    try:
-        token = generate_csrf()
-        resp.set_cookie(
-            "XSRF-TOKEN",
-            token,
-            secure=app.config.get("SESSION_COOKIE_SECURE", False),
-            httponly=False,  # doit être lisible par JS
-            samesite=app.config.get("SESSION_COOKIE_SAMESITE", "Lax"),
-            path="/"
-        )
-    finally:
-        return resp
-
-@app.errorhandler(CSRFError)
-def handle_csrf_error(e):
-    return jsonify({"ok": False, "error": "CSRF: " + (e.description or "token invalide")}), 400
-
 # ---------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------
@@ -258,7 +228,7 @@ def stats():
     stock_total = db.session.query(db.func.coalesce(db.func.sum(StockItem.quantity), 0)).scalar()
     loans_open = Loan.query.filter(Loan.returned_at.is_(None)).count()
     volunteers = Volunteer.query.count()
-    return jsonify({"stock_total": int(stock_total or 0), "prets_ouverts": loans_open, "benevoles": volunteers})
+    return jsonify({"stock_total": stock_total, "prets_ouverts": loans_open, "benevoles": volunteers})
 
 # ---------------------------------------------------------------------
 # Antennas
@@ -507,26 +477,6 @@ def stock_delete(item_id):
     log_action("stock.delete", "stock", item_id, "delete")
     return jsonify({"ok": True})
 
-# ===== Export Stock CSV (UTF-8 BOM; sep=;) =====
-@app.get("/api/stock/export.csv")
-@login_required
-def stock_export_csv():
-    sio = StringIO()
-    w = csv.writer(sio, delimiter=';', lineterminator='\n')
-    w.writerow(["Antenne", "Type", "Taille", "Quantité", "Tags"])
-    for s in StockItem.query.order_by(StockItem.id).all():
-        w.writerow([
-            s.antenna.name if s.antenna else s.antenna_id,
-            s.garment_type.label if s.garment_type else s.garment_type_id,
-            s.size or "",
-            s.quantity or 0,
-            ",".join(text_to_tags(s.tags_text)) if s.tags_text else ""
-        ])
-    data = "\ufeff" + sio.getvalue()  # BOM pour Excel
-    resp = Response(data, mimetype="text/csv; charset=utf-8")
-    resp.headers["Content-Disposition"] = f'attachment; filename="stock_{datetime.utcnow().strftime("%Y-%m-%d")}.csv"'
-    return resp
-
 # ---------------------------------------------------------------------
 # Volunteers (liste + recherche + import CSV + CRUD)
 # ---------------------------------------------------------------------
@@ -728,24 +678,25 @@ def public_find():
     fn = (request.args.get("first_name", "")).strip()
     ln = (request.args.get("last_name", "")).strip()
     v = Volunteer.query.filter(
-        db.func.lower(Volunteer.first_name) == db.func.lower(fn),
-        db.func.lower(Volunteer.last_name) == db.func.lower(ln),
+        db.func.lower(Volunteer.first_name) == fn.lower(),
+        db.func.lower(Volunteer.last_name) == ln.lower()
     ).first()
-    if not v:
-        return jsonify({"ok": False, "error": "Bénévole introuvable"}), 404
-    return jsonify({"ok": True, "id": v.id, "first_name": v.first_name, "last_name": v.last_name, "note": v.note})
+    if not v: return jsonify({"ok": False}), 404
+    return jsonify({"ok": True, "id": v.id, "first_name": v.first_name, "last_name": v.last_name})
 
 @app.get("/api/public/stock")
 def public_stock():
-    ant = request.args.get("antenna_id", type=int)
+    antenna_id = request.args.get("antenna_id", type=int)
     type_id = request.args.get("type_id", type=int)
-    size = request.args.get("size")
+    size = request.args.get("size", type=str)
     q = StockItem.query.filter(StockItem.quantity > 0)
-    if ant: q = q.filter(StockItem.antenna_id == ant)
+    if antenna_id: q = q.filter(StockItem.antenna_id == antenna_id)
     if type_id: q = q.filter(StockItem.garment_type_id == type_id)
-    if size: q = q.filter(StockItem.size == size)
-    data = [{"id": s.id, "type": s.garment_type.label, "size": s.size, "quantity": s.quantity} for s in q.all()]
-    return jsonify(data)
+    if size: q = q.filter(db.func.coalesce(StockItem.size, "") == size.strip())
+    res = []
+    for s in q.all():
+        res.append({"id": s.id, "type": s.garment_type.label, "type_id": s.garment_type_id, "size": s.size, "antenna": s.antenna.name, "antenna_id": s.antenna_id, "quantity": s.quantity})
+    return jsonify(res)
 
 @app.get("/api/public/types")
 def public_types():
