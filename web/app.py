@@ -4,16 +4,16 @@ import csv
 from io import StringIO
 from datetime import datetime
 
-from flask import Flask, jsonify, request, render_template, Response, make_response
+from flask import Flask, jsonify, request, render_template, Response
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import (
     LoginManager, login_user, login_required, logout_user, current_user, UserMixin
 )
 from passlib.hash import bcrypt
 from sqlalchemy import text, or_
-from flask_wtf.csrf import CSRFProtect, generate_csrf, CSRFError
 from sqlalchemy.exc import IntegrityError
 from werkzeug.utils import secure_filename
+from flask_wtf.csrf import CSRFProtect, generate_csrf, CSRFError
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
@@ -120,6 +120,8 @@ class InventoryLine(db.Model):
     session_id = db.Column(db.Integer, db.ForeignKey("inventory_sessions.id"), nullable=False)
     stock_item_id = db.Column(db.Integer, db.ForeignKey("stock_items.id"), nullable=False)
     counted_qty = db.Column(db.Integer, default=0)
+    previous_qty = db.Column(db.Integer, default=0)
+    delta = db.Column(db.Integer, default=0)
     session = db.relationship(InventorySession)
     stock_item = db.relationship(StockItem)
 
@@ -332,20 +334,24 @@ def types_delete(type_id):
 @app.get("/api/stock")
 @login_required
 def stock_list():
-    ant = request.args.get("antenna_id", type=int)
-    typ = request.args.get("type_id", type=int)
-    size = request.args.get("size")
-    q = StockItem.query
-    if ant: q = q.filter(StockItem.antenna_id == ant)
-    if typ: q = q.filter(StockItem.garment_type_id == typ)
-    if size: q = q.filter(StockItem.size == size)
-    items = q.order_by(StockItem.id.desc()).all()
     out = []
-    for s in items:
+    qry = StockItem.query
+    t = request.args.get("type_id", type=int)
+    a = request.args.get("antenna_id", type=int)
+    if t:
+        qry = qry.filter(StockItem.garment_type_id == t)
+    if a:
+        qry = qry.filter(StockItem.antenna_id == a)
+    for s in qry.order_by(StockItem.id.desc()).all():
         out.append({
-            "id": s.id, "antenna_id": s.antenna_id, "antenna": s.antenna.name if s.antenna else s.antenna_id,
-            "garment_type_id": s.garment_type_id, "garment_type": s.garment_type.label if s.garment_type else s.garment_type_id,
-            "size": s.size, "quantity": s.quantity, "tags": s.tags or ""
+            "id": s.id,
+            "garment_type_id": s.garment_type_id,
+            "garment_type": s.garment_type.label if s.garment_type else s.garment_type_id,
+            "antenna_id": s.antenna_id,
+            "antenna": s.antenna.name if s.antenna else s.antenna_id,
+            "size": s.size or "",
+            "quantity": s.quantity or 0,
+            "tags": s.tags or ""
         })
     return jsonify(out)
 
@@ -594,16 +600,16 @@ def inventory_lines(sid):
 @login_required
 def inventory_count(sid):
     d = request.get_json() or {}
-    s = db.session.get(InventorySession, sid)
-    if not s or s.closed_at: return jsonify({"ok": False}), 404
-    stock_id = d.get("stock_item_id")
-    counted_qty = int(d.get("counted_qty") or 0)
+    stock_id = int(d.get("stock_item_id"))
+    counted = int(d.get("counted_qty") or 0)
+    sess = db.session.get(InventorySession, sid)
+    s = db.session.get(StockItem, stock_id)
+    if not sess or not s or sess.closed_at: return jsonify({"ok": False}), 404
     line = InventoryLine.query.filter_by(session_id=sid, stock_item_id=stock_id).first()
     if not line:
-        line = InventoryLine(session_id=sid, stock_item_id=stock_id, counted_qty=counted_qty)
+        line = InventoryLine(session_id=sid, stock_item_id=stock_id, previous_qty=s.quantity)
         db.session.add(line)
-    else:
-        line.counted_qty = counted_qty
+    line.counted_qty = counted; line.delta = counted - line.previous_qty
     db.session.commit()
     return jsonify({"ok": True})
 
@@ -612,21 +618,26 @@ def inventory_count(sid):
 def inventory_close(sid):
     s = db.session.get(InventorySession, sid)
     if not s or s.closed_at: return jsonify({"ok": False}), 404
+    # Applique les deltas
+    lines = InventoryLine.query.filter_by(session_id=sid).all()
+    for l in lines:
+        st = db.session.get(StockItem, l.stock_item_id)
+        if st: st.quantity = l.counted_qty
     s.closed_at = datetime.utcnow()
     db.session.commit()
     audit("inventory_close", "inventory_session", sid, "")
     return jsonify({"ok": True})
 
 # ---------------------------------------------------------------------
-# Stats (utilisé par le dashboard existant)
+# Stats
 # ---------------------------------------------------------------------
 @app.get("/api/stats")
 @login_required
 def stats():
-    total_stock = db.session.query(db.func.coalesce(db.func.sum(StockItem.quantity), 0)).scalar() or 0
-    prets_ouverts = db.session.query(db.func.count(Loan.id)).filter(Loan.returned_at.is_(None)).scalar() or 0
-    benevoles = db.session.query(db.func.count(db.func.distinct(Volunteer.id))).scalar() or 0
-    return jsonify({"stock_total": int(total_stock), "prets_ouverts": int(prets_ouverts), "benevoles": int(benevoles)})
+    stock_total = db.session.query(db.func.coalesce(db.func.sum(StockItem.quantity), 0)).scalar()
+    loans_open = Loan.query.filter(Loan.returned_at.is_(None)).count()
+    benevoles = db.session.query(db.func.count(db.func.distinct(Volunteer.id))).scalar()
+    return jsonify({"stock_total": int(stock_total or 0), "prets_ouverts": int(loans_open or 0), "benevoles": int(benevoles or 0)})
 
 # ---------------------------------------------------------------------
 # Export stock CSV (UTF-8 BOM; sep=;)
@@ -634,23 +645,19 @@ def stats():
 @app.get("/api/stock/export.csv")
 @login_required
 def stock_export_csv():
-    # Query join optional relations
-    q = db.session.query(StockItem)
-    # Build CSV
     sio = StringIO()
     writer = csv.writer(sio, delimiter=';', lineterminator='\n')
-    writer.writerow(["Antenne", "Type", "Taille", "Quantité", "Tags", "Dernière mise à jour"])
-    # attempt to resolve names if relationships exist
-    for s in q.all():
+    writer.writerow(["Antenne","Type","Taille","Quantité","Tags","Dernière mise à jour"])
+    items = StockItem.query.all()
+    for s in items:
         antenna = getattr(getattr(s, "antenna", None), "name", None)
         if antenna is None:
-            # fallback by looking up antenna table
             ant = db.session.get(Antenna, getattr(s, "antenna_id", None))
             antenna = ant.name if ant else ""
         gtype = getattr(getattr(s, "garment_type", None), "label", None)
         if gtype is None:
             gt = db.session.get(GarmentType, getattr(s, "garment_type_id", None))
-            gtype = (gt.label if gt else str(getattr(s, "garment_type_id", "")))
+            gtype = gt.label if gt else str(getattr(s, "garment_type_id", ""))
         size = getattr(s, "size", "") or ""
         qty = getattr(s, "quantity", 0) or 0
         tags = getattr(s, "tags", "") or ""
@@ -659,8 +666,7 @@ def stock_export_csv():
         writer.writerow([antenna, gtype, size, qty, tags, updated_str])
     data = sio.getvalue()
     data = "\ufeff" + data  # BOM for Excel
-    resp = make_response(data)
-    resp.headers["Content-Type"] = "text/csv; charset=utf-8"
+    resp = Response(data, mimetype="text/csv; charset=utf-8")
     resp.headers["Content-Disposition"] = f"attachment; filename=stock_{datetime.utcnow().strftime('%Y-%m-%d')}.csv"
     return resp
 
