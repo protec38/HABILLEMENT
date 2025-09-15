@@ -308,10 +308,10 @@ const App = {
     const loans = await this.fetchJSON(`/api/public/loans?volunteer_id=${volId}`);
     const elList = this.qs('#pubLists');
     elList.innerHTML = `
-      <h4>Stock disponible</h4>
-      <ul>${stock.map(s=>`<li>${s.type} ${s.size||''} (${s.quantity}) <button class='btn btn-ghost' onclick='App.borrow(${volId},${s.id})'>Emprunter</button></li>`).join('')}</ul>
       <h4>Prêts en cours</h4>
       <ul>${loans.map(l=>`<li>${l.type} ${l.size||''} depuis ${new Date(l.since).toLocaleDateString()} <button class='btn btn-ghost' onclick='App.returnLoanPublic(${l.id})'>Rendre</button></li>`).join('')}</ul>
+      <h4>Stock disponible</h4>
+      <ul>${stock.map(s=>`<li>${s.type} ${s.size||''} (${s.quantity}) <button class='btn btn-ghost' onclick='App.borrow(${volId},${s.id})'>Emprunter</button></li>`).join('')}</ul>
     `;
   },
   async showVolPublic(v){
