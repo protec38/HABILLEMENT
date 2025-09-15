@@ -1,341 +1,330 @@
-/* web/static/app.js */
-
-const App = {
+// -------------------------------------------------------------
+// Minimal SPA with CSRF, pagination, live search, sorting, charts
+// -------------------------------------------------------------
+const state = {
   user: null,
-  publicAntennaId: null,
-  nav: [
-    { id: "dashboard", label: "Dashboard", auth: true },
-    { id: "antennes", label: "Antennes", auth: true },
-    { id: "stock", label: "Stock", auth: true },
-    { id: "benevoles", label: "Bénévoles", auth: true },
-    { id: "prets", label: "Prêts en cours", auth: true },
-    { id: "inventaire", label: "Inventaire", auth: true },
-    { id: "admin", label: "Administration", auth: true },
-    { id: "pretPublic", label: "Prêt publique", auth: false },
-  ],
-
-  // ------------------------------- Utils -------------------------------
-  qs: (s) => document.querySelector(s),
-  async fetchJSON(url, opts = {}) {
-    opts.headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
-    const res = await fetch(url, opts);
-    let data = null;
-    try { data = await res.json(); } catch {}
-    if (!res.ok) {
-      const msg = (data && (data.error || data.message)) || `Erreur ${res.status}`;
-      const err = new Error(msg); err.status = res.status; err.data = data; throw err;
-    }
-    return data;
-  },
-  flash(msg) {
-    const el = document.getElementById("flash");
-    el.innerHTML = `<div class="toast">${msg}</div>`;
-    setTimeout(() => (el.innerHTML = ""), 2600);
-  },
-  daysBetween(a, b) { return Math.round((b - a) / (1000 * 60 * 60 * 24)); },
-  getSetting(key, def) { try { const v = localStorage.getItem("pc:" + key); return v !== null ? JSON.parse(v) : def; } catch { return def; } },
-  setSetting(key, val) { try { localStorage.setItem("pc:" + key, JSON.stringify(val)); } catch {} },
-
-  // ------------------------------ Nav / Login ------------------------------
-  show(id) {
-    document.querySelectorAll(".screen").forEach((e) => e.classList.add("hidden"));
-    this.qs("#" + id)?.classList.remove("hidden");
-    document.querySelectorAll(".nav a").forEach((a) => a.classList.toggle("active", a.dataset.id === id));
-    if (id === "dashboard") this.renderDashboard();
-    if (id === "antennes") this.renderAntennes();
-    if (id === "stock") this.renderStock();
-    if (id === "benevoles") this.renderBenevoles();
-    if (id === "prets") this.renderPrets();
-    if (id === "inventaire") this.renderInventaire();
-    if (id === "admin") this.renderAdmin();
-    if (id === "pretPublic") this.renderPretPublic();
-  },
-  renderNav() {
-    const el = this.qs("#nav"); el.innerHTML = "";
-    const frag = document.createDocumentFragment();
-    (this.user ? this.nav : this.nav.filter((x) => !x.auth)).forEach((item) => {
-      const a = document.createElement("a");
-      a.href = "#"; a.dataset.id = item.id; a.textContent = item.label;
-      a.onclick = (e) => { e.preventDefault(); this.show(item.id); };
-      frag.appendChild(a);
-    });
-    if (this.user) {
-      const lo = document.createElement("a");
-      lo.href = "#"; lo.textContent = "Déconnexion";
-      lo.onclick = async (e) => { e.preventDefault(); await this.fetchJSON("/api/logout", { method: "POST" }); this.user = null; location.href = "/"; };
-      frag.appendChild(lo);
-    }
-    el.appendChild(frag);
-  },
-  async init() {
-    const m = location.pathname.match(/^\/a\/(\d+)/);
-    if (m) this.publicAntennaId = Number(m[1]);
-    if (this.publicAntennaId) { // page publique
-      document.getElementById("loginView").classList.add("hidden");
-      this.renderNav(); this.show("pretPublic"); return;
-    }
-    try { const me = await this.fetchJSON("/api/me"); if (me.ok) { this.user = me.user; this.renderNav(); this.qs("#loginView").classList.add("hidden"); this.show("dashboard"); return; } } catch {}
-    this.renderNav(); this.qs("#loginView").classList.remove("hidden");
-  },
-  async login() {
-    const btn = document.getElementById("loginBtn");
-    const email = this.qs("#loginEmail").value.trim();
-    const password = this.qs("#loginPass").value;
-    const err = this.qs("#loginError");
-    err.classList.add("hidden"); err.textContent = "";
-    if (!email || !password) { err.textContent = "Email et mot de passe requis"; err.classList.remove("hidden"); return; }
-    btn.disabled = true; const old = btn.textContent; btn.textContent = "Connexion...";
-    try {
-      const r = await this.fetchJSON("/api/login", { method: "POST", body: JSON.stringify({ email, password }) });
-      this.user = r.user; this.renderNav(); this.qs("#loginView").classList.add("hidden"); this.show("dashboard");
-      this.flash("Bienvenue " + (this.user.name || this.user.email));
-    } catch (e) {
-      err.textContent = e.message || "Identifiants invalides"; err.classList.remove("hidden"); this.flash("Connexion refusée");
-    } finally { btn.disabled = false; btn.textContent = old; }
-  },
-
-  // ------------------------------ Modal ------------------------------
-  openModal(title, bodyHTML) {
-    this.qs("#modalTitle").textContent = title;
-    this.qs("#modalBody").innerHTML = bodyHTML;
-    const m = this.qs("#modal");
-    document.body.classList.add("no-scroll");
-    m.classList.remove("hidden"); m.classList.add("show");
-  },
-  closeModal() {
-    const m = this.qs("#modal");
-    m.classList.remove("show"); m.classList.add("hidden");
-    this.qs("#modalBody").innerHTML = "";
-    document.body.classList.remove("no-scroll");
-  },
-
-  // ------------------------------ Dashboard (abrégé) ------------------------------
-  async renderDashboard() {
-    const [stats, ants, stock, openLoans] = await Promise.all([
-      this.fetchJSON("/api/stats").catch(() => ({ stock_total: 0, prets_ouverts: 0, benevoles: 0 })),
-      this.fetchJSON("/api/antennas").catch(() => []),
-      this.fetchJSON("/api/stock").catch(() => []),
-      this.fetchJSON("/api/loans/open").catch(() => []),
-    ]);
-    const overdueDays = this.getSetting("overdue_days", 30);
-    const now = Date.now();
-    const overdue = openLoans.map(l => ({ ...l, days: this.daysBetween(new Date(l.since).getTime(), now) })).filter(l => l.days > overdueDays);
-    const antThreshold = Object.fromEntries(ants.map(a => [a.id, (a.low_stock_threshold ?? this.getSetting("default_threshold", 5))]));
-    const lowStock = stock.filter(s => s.quantity <= (antThreshold[s.antenna_id] ?? 5));
-    const byAntenna = {}, byType = {};
-    stock.forEach(s => { byAntenna[s.antenna] = (byAntenna[s.antenna] || 0) + s.quantity; byType[s.garment_type] = (byType[s.garment_type] || 0) + s.quantity; });
-
-    const el=this.qs('#dashboard'); el.innerHTML=`
-      <div class="card">
-        <h2>Tableau de bord</h2>
-        <div class="grid-3">
-          <div>Total stock: <b>${stats.stock_total}</b></div>
-          <div>Prêts ouverts: <b>${stats.prets_ouverts}</b></div>
-          <div>Bénévoles: <b>${stats.benevoles}</b></div>
-        </div>
-        <div class="grid-2 mt">
-          <div>
-            <h3>Alertes stock bas</h3>
-            ${lowStock.length?`<table class="table"><thead><tr><th>Type</th><th>Taille</th><th>Antenne</th><th>Qté</th></tr></thead>
-              <tbody>${lowStock.map(s=>`<tr><td>${s.garment_type}</td><td>${s.size||'—'}</td><td>${s.antenna}</td><td><span class="badge">${s.quantity}</span></td></tr>`).join('')}</tbody></table>`:`<p class="muted">Aucune alerte.</p>`}
-          </div>
-          <div>
-            <div class="chips" style="justify-content:space-between">
-              <h3>Retards de prêt</h3>
-              <button class="btn btn-ghost" onclick="App.setOverdue()">Seuil: ${overdueDays} j</button>
-            </div>
-            ${overdue.length?`<table class="table"><thead><tr><th>Bénévole</th><th>Article</th><th>Jours</th><th></th></tr></thead>
-              <tbody>${overdue.map(l=>`<tr><td>${l.volunteer}</td><td>${l.type} ${l.size||''}</td>
-              <td><span class="badge badge-danger">${l.days}</span></td>
-              <td><button class="btn btn-ghost" onclick="App.returnLoan(${l.id})">Rendu</button></td></tr>`).join('')}</tbody></table>`:`<p class="muted">Aucun retard.</p>`}
-          </div>
-        </div>
-      </div>`;
-  },
-  setOverdue(){ const cur=this.getSetting('overdue_days',30); const v=prompt('Nombre de jours avant retard ?', String(cur)); if(!v) return; const n=Math.max(1, parseInt(v,10)||30); this.setSetting('overdue_days', n); this.flash('Seuil mis à jour'); this.renderDashboard(); },
-
-  // ------------------------------ Antennes ------------------------------
-  async renderAntennes(){ const el=this.qs('#antennes'); const ants=await this.fetchJSON('/api/antennas'); el.innerHTML=`<div class="card">
-    <div class="chips" style="justify-content:space-between"><h2>Antennes</h2><button class="btn btn-primary" onclick="App.modalAddAntenna()">+ Antenne</button></div>
-    <table class="table"><thead><tr><th>Nom</th><th>Adresse</th><th>Seuil alerte</th><th></th></tr></thead><tbody>
-      ${ants.map(a=>`<tr><td>${a.name}</td><td class="muted">${a.address||''}</td>
-      <td style="max-width:140px"><input class="input" type="number" min="0" value="${typeof a.low_stock_threshold==='number'?a.low_stock_threshold:''}" onblur="App.saveAntennaThreshold(${a.id}, this.value)"></td>
-      <td class="chips"><button class="btn btn-ghost" onclick='App.modalEditAntenna(${a.id}, ${JSON.stringify(a).replaceAll("'","&apos;")})'>Modifier</button>
-      <button class="btn btn-ghost" onclick='App.deleteAntenna(${a.id})'>Supprimer</button></td></tr>`).join('')}
-    </tbody></table></div>`; },
-  modalAddAntenna(){ this.openModal('Nouvelle antenne', `<div class="grid-3"><input id="ant_name" class="input" placeholder="Nom"><input id="ant_addr" class="input" placeholder="Adresse"><input id="ant_thr" class="input" type="number" min="0" placeholder="Seuil alerte (ex: 5)"></div><div class="chips" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.saveAntenna()">Enregistrer</button></div>`); },
-  async saveAntenna(){ const name=this.qs('#ant_name').value.trim(); const address=this.qs('#ant_addr').value.trim(); const thr=this.qs('#ant_thr').value ? Number(this.qs('#ant_thr').value) : null; if(!name) return this.flash('Nom requis',false); const body={name,address}; if(thr!==null) body.low_stock_threshold=thr; await this.fetchJSON('/api/antennas',{method:'POST', body: JSON.stringify(body)}); this.closeModal(); this.renderAntennes(); this.flash('Antenne créée'); },
-  modalEditAntenna(id,a){ this.openModal('Modifier antenne', `<div class="grid-3"><input id="e_ant_name" class="input" value="${a.name}"><input id="e_ant_addr" class="input" value="${a.address||''}"><input id="e_ant_thr" class="input" type="number" min="0" value="${typeof a.low_stock_threshold==='number'?a.low_stock_threshold:''}"></div><div class="chips" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.updateAntenna(${id})">Enregistrer</button></div>`); },
-  async updateAntenna(id){ const name=this.qs('#e_ant_name').value.trim(); const address=this.qs('#e_ant_addr').value.trim(); const thr=this.qs('#e_ant_thr').value ? Number(this.qs('#e_ant_thr').value) : null; const body={name,address}; if(thr!==null) body.low_stock_threshold=thr; await this.fetchJSON('/api/antennas/'+id,{method:'PUT', body: JSON.stringify(body)}); this.closeModal(); this.renderAntennes(); this.flash('Antenne mise à jour'); },
-  async saveAntennaThreshold(id,val){ const thr = val==='' ? null : Math.max(0, Number(val)||0); const body={}; if(thr!==null) body.low_stock_threshold=thr; await this.fetchJSON('/api/antennas/'+id,{method:'PUT', body: JSON.stringify(body)}); this.flash('Seuil mis à jour'); },
-  async deleteAntenna(id){ if(!confirm('Supprimer cette antenne ?')) return; try{ await this.fetchJSON('/api/antennas/'+id,{method:'DELETE'}); this.renderAntennes(); this.flash('Antenne supprimée'); } catch(e){ this.flash(e.message||'Suppression impossible'); } },
-
-  // ------------------------------ Stock (CRUD + tags) ------------------------------
-  async renderStock(){ const el=this.qs('#stock'); const [types, ants]=await Promise.all([this.fetchJSON('/api/types'), this.fetchJSON('/api/antennas')]); this._types=types; this._ants=ants;
-    const optType=(v)=>['<option value="">Type</option>'].concat(types.map(t=>`<option value="${t.id}" ${v==t.id?'selected':''}>${t.label}</option>`)).join('');
-    const optAnt=(v)=>['<option value="">Antenne</option>'].concat(ants.map(a=>`<option value="${a.id}" ${v==a.id?'selected':''}>${a.name}</option>`)).join('');
-    el.innerHTML=`<div class="card">
-      <div class="chips" style="justify-content:space-between"><h2>Stock</h2>
-        <div class="chips">
-          <button class="btn btn-ghost" onclick="App.modalAddType()">+ Type</button>
-          <button class="btn btn-primary" onclick="App.modalAddStock()">+ Article</button>
-        </div>
-      </div>
-      <div class="grid-3 mt"><select id="f_type">${optType('')}</select><select id="f_ant">${optAnt('')}</select><button class="btn btn-ghost" onclick="App.loadStock()">Filtrer</button></div>
-      <div id="stockTable" class="mt"></div>
-    </div>`;
-    this._optType=optType; this._optAnt=optAnt; await this.loadStock(); },
-  async loadStock(){ const t=this.qs('#f_type')?.value||''; const a=this.qs('#f_ant')?.value||''; const qs=[]; if(t) qs.push(`type_id=${t}`); if(a) qs.push(`antenna_id=${a}`); const stock=await this.fetchJSON('/api/stock'+(qs.length?`?${qs.join('&')}`:'')); this.qs('#stockTable').innerHTML=`<table class="table"><thead><tr><th>Type</th><th>Taille</th><th>Antenne</th><th>Qté</th><th>Tags</th><th></th></tr></thead><tbody>${stock.map(s=>`<tr><td>${s.garment_type}</td><td>${s.size||'—'}</td><td>${s.antenna}</td><td>${s.quantity}</td><td>${this.renderTagsInline(s.tags||[])}</td><td class="chips"><button class="btn btn-ghost" onclick='App.modalEditStock(${s.id}, ${JSON.stringify({id:s.id,type_id:s.garment_type_id,ant_id:s.antenna_id,size:s.size||"",qty:s.quantity,tags:s.tags||[]}).replaceAll("'","&apos;")})'>Modifier</button><button class="btn btn-ghost" onclick="App.deleteStock(${s.id})">Supprimer</button></td></tr>`).join('')}</tbody></table>`; },
-  renderTagsInline(tags){ tags=Array.isArray(tags)? tags: String(tags||'').split(',').map(x=>x.trim()).filter(Boolean); if(!tags.length) return `<span class="muted">—</span>`; return `<div class="chips">${tags.map(t=>`<span class="badge">${t}</span>`).join('')}</div>`; },
-  modalAddType(){ this.openModal('Ajouter un type', `<div class="grid-2"><input id="new_type" class="input" placeholder="Libellé (ex: Parka)"><label><input id="new_has_size" type="checkbox" checked> Avec taille</label></div><div class="chips" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.saveType()">Enregistrer</button></div><div class="mt"><button class="btn btn-ghost" onclick="App.manageTypes()">Gérer / Supprimer</button></div>`); },
-  async manageTypes(){ const types=await this.fetchJSON('/api/types'); const body=`<table class="table"><thead><tr><th>Type</th><th>Taille ?</th><th></th></tr></thead><tbody>${types.map(t=>`<tr><td>${t.label}</td><td>${t.has_size?'Oui':'Non'}</td><td><button class="btn btn-ghost" onclick="App.deleteType(${t.id})">Supprimer</button></td></tr>`).join('')}</tbody></table>`; this.openModal('Types existants', body); },
-  async deleteType(id){ if(!confirm('Supprimer ce type ?\n(Refusé s’il existe du stock)')) return; try{ await this.fetchJSON('/api/types/'+id,{method:'DELETE'}); this.flash('Type supprimé'); this.closeModal(); this.renderStock(); } catch(e){ this.flash(e.message||'Suppression refusée'); } },
-  async saveType(){ const label=this.qs('#new_type').value.trim(); const has_size=this.qs('#new_has_size').checked; if(!label) return this.flash('Libellé requis',false); try{ await this.fetchJSON('/api/types',{method:'POST', body: JSON.stringify({label,has_size})}); this.closeModal(); this.renderStock(); this.flash('Type ajouté'); }catch(e){ this.flash(e.message||'Création refusée'); }},
-  modalAddStock(){ this.openModal('Ajouter au stock', `<div class="grid-4"><select id="s_type">${this._optType('')}</select><select id="s_ant">${this._optAnt('')}</select><input id="s_size" class="input" placeholder="Taille (optionnel)"><input id="s_qty" class="input" type="number" value="1" min="1" placeholder="Quantité"></div><div class="mt"><input id="s_tags" class="input" placeholder="Tags séparés par des virgules (ex: Hiver, EPS)"></div><div class="chips" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.saveStock()">Enregistrer</button></div>`); },
-  async saveStock(){ const t=Number(this.qs('#s_type').value); const a=Number(this.qs('#s_ant').value); const size=this.qs('#s_size').value.trim()||null; const qty=Number(this.qs('#s_qty').value||0); const tags=this.qs('#s_tags').value.split(',').map(x=>x.trim()).filter(Boolean); if(!t||!a||qty<=0) return this.flash('Type, antenne et quantité requis',false); try{ await this.fetchJSON('/api/stock',{method:'POST', body: JSON.stringify({garment_type_id:t, antenna_id:a, size, quantity:qty, tags})}); this.closeModal(); this.loadStock(); this.flash('Stock ajouté'); }catch(e){ this.flash(e.message||'Erreur ajout stock'); } },
-  modalEditStock(id,s){ this.openModal('Modifier un article de stock', `<div class="grid-4"><select id="es_type">${this._optType(s.type_id)}</select><select id="es_ant">${this._optAnt(s.ant_id)}</select><input id="es_size" class="input" value="${s.size||''}" placeholder="Taille"><input id="es_qty" class="input" type="number" value="${s.qty}" min="0"></div><div class="mt"><input id="es_tags" class="input" value="${(s.tags||[]).join(', ')}" placeholder="Tags séparés par des virgules"></div><div class="chips" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.saveEditStock(${id})">Enregistrer</button></div>`); },
-  async saveEditStock(id){ const body={ garment_type_id:Number(this.qs('#es_type').value), antenna_id:Number(this.qs('#es_ant').value), size:this.qs('#es_size').value.trim()||null, quantity:Number(this.qs('#es_qty').value||0), tags:this.qs('#es_tags').value.split(',').map(x=>x.trim()).filter(Boolean) }; try{ await this.fetchJSON('/api/stock/'+id,{method:'PUT', body: JSON.stringify(body)}); this.closeModal(); this.loadStock(); this.flash('Article mis à jour'); }catch(e){ this.flash(e.message||'Mise à jour refusée'); } },
-  async deleteStock(id){ if(!confirm('Supprimer cet article ?')) return; try{ await this.fetchJSON('/api/stock/'+id,{method:'DELETE'}); await this.loadStock(); this.flash('Article supprimé'); } catch(e){ this.flash(e.message||'Suppression impossible'); } },
-
-  // ------------------------------ Bénévoles (CRUD + recherche + import) ------------------------------
-  _volLocal: [],
-  async renderBenevoles(){ const el=this.qs('#benevoles'); const data=await this.fetchJSON('/api/volunteers'); this._volLocal=data;
-    el.innerHTML=`<div class="card">
-      <div class="chips" style="justify-content:space-between">
-        <h2>Bénévoles</h2>
-        <div class="chips">
-          <input id="volSearch" class="input" placeholder="Rechercher (nom, prénom, note)" style="min-width:260px">
-          <a class="btn btn-ghost" href="/api/volunteers/template.csv">⬇️ Modèle CSV</a>
-          <input id="volImportFile" type="file" accept=".csv" style="display:none">
-          <button class="btn btn-ghost" onclick="document.getElementById('volImportFile').click()">Importer CSV</button>
-          <button class="btn btn-primary" onclick="App.modalAddVol()">+ Bénévole</button>
-        </div>
-      </div>
-      <p class="muted">Les doublons nom+prénom sont ignorés à l'import.</p>
-      <div id="volTable"></div>
-    </div>`;
-    this.drawVolTable(this._volLocal);
-    const fileInput=document.getElementById('volImportFile'); fileInput.onchange=async()=>{ const file=fileInput.files[0]; if(!file) return; await this.importVolunteersCSV(file); fileInput.value=""; };
-    const search=this.qs('#volSearch'); search.oninput=()=>{ const q=search.value.trim().toLowerCase(); if(!q) return this.drawVolTable(this._volLocal); const f=this._volLocal.filter(v=> (v.last_name||'').toLowerCase().includes(q) || (v.first_name||'').toLowerCase().includes(q) || (v.note||'').toLowerCase().includes(q) ); this.drawVolTable(f); };
-  },
-  drawVolTable(list){ this.qs('#volTable').innerHTML=`<table class="table"><thead><tr><th>Nom</th><th>Prénom</th><th>Notes</th><th></th></tr></thead><tbody>${(list||[]).map(v=>`<tr><td>${v.last_name}</td><td>${v.first_name}</td><td class="muted">${v.note||''}</td><td class="chips"><button class="btn btn-ghost" onclick='App.modalEditVol(${v.id}, ${JSON.stringify(v).replaceAll("'","&apos;")})'>Modifier</button><button class="btn btn-ghost" onclick='App.deleteVol(${v.id})'>Supprimer</button><button class="btn btn-ghost" onclick='App.viewVol(${v.id}, ${JSON.stringify(v).replaceAll("'","&apos;")})'>Voir</button></td></tr>`).join('')}</tbody></table>`; },
-  modalAddVol(){ this.openModal('Nouveau bénévole', `<div class="grid-3"><input id="v_first" class="input" placeholder="Prénom"><input id="v_last" class="input" placeholder="Nom"><input id="v_note" class="input" placeholder="Infos"></div><div class="chips" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.addVol()">Enregistrer</button></div>`); },
-  async addVol(){ const first_name=this.qs('#v_first').value.trim(); const last_name=this.qs('#v_last').value.trim(); const note=this.qs('#v_note').value.trim(); if(!first_name||!last_name) return this.flash('Prénom et nom requis',false); try{ await this.fetchJSON('/api/volunteers',{method:'POST', body: JSON.stringify({first_name,last_name,note})}); this.closeModal(); this.renderBenevoles(); this.flash('Bénévole créé'); }catch(e){ this.flash(e.message||'Création refusée'); } },
-  modalEditVol(id,v){ this.openModal('Modifier bénévole', `<div class="grid-3"><input id="e_first" class="input" value="${v.first_name}"><input id="e_last" class="input" value="${v.last_name}"><input id="e_note" class="input" value="${v.note||''}"></div><div class="chips" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.saveEditVol(${id})">Enregistrer</button></div>`); },
-  async saveEditVol(id){ const first_name=this.qs('#e_first').value.trim(), last_name=this.qs('#e_last').value.trim(), note=this.qs('#e_note').value.trim(); try{ await this.fetchJSON('/api/volunteers/'+id,{method:'PUT', body: JSON.stringify({first_name,last_name,note})}); this.closeModal(); this.renderBenevoles(); this.flash('Bénévole mis à jour'); }catch(e){ this.flash(e.message||'Mise à jour refusée'); } },
-  async deleteVol(id){ if(!confirm('Supprimer ce bénévole ?')) return; try{ await this.fetchJSON('/api/volunteers/'+id,{method:'DELETE'}); await this.renderBenevoles(); this.flash('Bénévole supprimé'); } catch(e){ this.flash(e.message||'Suppression impossible'); } },
-  async viewVol(id,v){ const loans=await this.fetchJSON(`/api/volunteers/${id}/loans`); const html=`<div class="grid-2"><div><div class="muted">Nom</div><div class="badge">${v.last_name}</div></div><div><div class="muted">Prénom</div><div class="badge">${v.first_name}</div></div></div><div class="mt"><div class="muted">Notes</div><div class="card" style="padding:.6rem;">${v.note||"<span class='muted'>Aucune note</span>"}</div></div><div class="mt"><h3>Prêts en cours</h3>${loans.length?`<table class="table"><thead><tr><th>Article</th><th>Qté</th><th>Depuis</th></tr></thead><tbody>${loans.map(l=>`<tr><td>${l.type} / ${l.size||'—'}</td><td>${l.qty}</td><td>${new Date(l.since).toLocaleString()}</td></tr>`).join('')}</tbody></table>`:'<p class="muted">Aucun prêt en cours</p>'}</div>`; this.openModal('Détails bénévole', html); },
-  async importVolunteersCSV(file){ try{ const fd=new FormData(); fd.append('file', file, file.name); const res=await fetch('/api/volunteers/import',{method:'POST', body: fd}); const data=await res.json(); if(!res.ok) throw new Error((data&&(data.error||data.message))||'Import refusé'); this.flash(`Import: +${data.added} ajoutés, ${data.skipped} ignorés (${data.total} lignes)`); await this.renderBenevoles(); } catch(e){ this.flash(e.message||'Erreur import CSV'); } },
-
-  // ------------------------------ Prêts ------------------------------
-  async renderPrets(){ const el=this.qs('#prets'); const r=await this.fetchJSON('/api/loans/open'); el.innerHTML=`<div class="card"><h2>Prêts en cours</h2><table class="table"><thead><tr><th>Bénévole</th><th>Article</th><th>Qté</th><th>Depuis</th><th></th></tr></thead><tbody>${r.map(l=>`<tr><td>${l.volunteer}</td><td>${l.type} / ${l.size||'—'} @ ${l.antenna}</td><td>${l.qty}</td><td>${new Date(l.since).toLocaleString()}</td><td><button class="btn btn-ghost" onclick="App.returnLoan(${l.id})">Marquer rendu</button></td></tr>`).join('')}</tbody></table></div>`; },
-  async returnLoan(id){ try{ await this.fetchJSON('/api/loans/return/'+id,{method:'POST'}); this.renderPrets(); this.flash('Prêt rendu'); }catch(e){ this.flash(e.message||'Action refusée'); } },
-
-  // ------------------------------ Inventaire ------------------------------
-  async renderInventaire(){ const el=this.qs('#inventaire'); const ants=await this.fetchJSON('/api/antennas'); el.innerHTML=`<div class="card"><h2>Inventaire / Audit</h2><div class="grid-2"><select id="inv_ant">${['<option value="">Choisir une antenne</option>'].concat(ants.map(a=>`<option value="${a.id}">${a.name}</option>`)).join('')}</select><button class="btn btn-primary" onclick="App.startInventory()">Démarrer</button></div><div id="invZone" class="mt"></div></div>`; },
-  async startInventory(){ const ant=Number(this.qs('#inv_ant').value||0); if(!ant) return this.flash('Choisis une antenne'); const sess=await this.fetchJSON('/api/inventory/start',{method:'POST', body: JSON.stringify({antenna_id:ant})}); const items=await this.fetchJSON(`/api/inventory/${sess.id}/items`); const zone=this.qs('#invZone'); zone.innerHTML=`<div class="card"><div class="chips" style="justify-content:space-between"><h3>Session #${sess.id} — ${items.antenna}</h3><button class="btn btn-ghost" onclick="App.closeInventory(${sess.id})">Valider et clôturer</button></div><p class="muted">Tape la quantité physiquement comptée.</p><table class="table"><thead><tr><th>Article</th><th>Taille</th><th>Stock</th><th>Compté</th></tr></thead><tbody>${items.rows.map(r=>`<tr><td>${r.type}</td><td>${r.size||'—'}</td><td>${r.quantity}</td><td><input class="input" type="number" min="0" value="${r.quantity}" onblur="App.saveCount(${sess.id},${r.stock_item_id},this.value)"></td></tr>`).join('')}</tbody></table></div>`; },
-  async saveCount(sid,stockId,val){ const counted=Math.max(0, Number(val||0)); try{ await this.fetchJSON(`/api/inventory/${sid}/count`,{method:'POST', body: JSON.stringify({stock_item_id:stockId, counted_qty:counted})}); this.flash('Comptage enregistré'); }catch(e){ this.flash(e.message||'Enregistrement refusé'); } },
-  async closeInventory(sid){ try{ await this.fetchJSON(`/api/inventory/${sid}/close`,{method:'POST'}); this.flash('Inventaire clôturé ✅'); this.renderInventaire(); }catch(e){ this.flash(e.message||'Clôture refusée'); } },
-
-  // ------------------------------ Administration ------------------------------
-  async renderAdmin(){ const el=this.qs('#admin'); const users=await this.fetchJSON('/api/users'); const overdue=this.getSetting('overdue_days',30); const defThr=this.getSetting('default_threshold',5); el.innerHTML=`<div class="card"><div class="chips" style="justify-content:space-between"><h2>Administration</h2><div class="chips"><button class="btn btn-ghost" onclick="App.viewLogs()">Journaux</button><button class="btn btn-primary" onclick="App.modalAddUser()">+ Utilisateur</button></div></div><div class="grid-3 mt"><div><label class="muted">Jours avant retard</label><input id="set_overdue" class="input" type="number" min="1" value="${overdue}" onblur="App.saveAdminSettings()"></div><div><label class="muted">Seuil stock bas par défaut</label><input id="set_threshold" class="input" type="number" min="0" value="${defThr}" onblur="App.saveAdminSettings()"></div><div class="muted" style="display:flex;align-items:flex-end">Réglages locaux appliqués immédiatement.</div></div><h3 class="mt">Utilisateurs</h3><table class="table"><thead><tr><th>Nom</th><th>Email</th><th>Rôle</th><th></th></tr></thead><tbody>${users.map(u=>`<tr><td>${u.name}</td><td>${u.email}</td><td><span class="badge">${u.role}</span></td><td class="chips"><button class="btn btn-ghost" onclick='App.modalEditUser(${u.id}, ${JSON.stringify(u).replaceAll("'","&apos;")})'>Modifier</button><button class="btn btn-ghost" onclick='App.deleteUser(${u.id})'>Supprimer</button></td></tr>`).join('')}</tbody></table></div>`; },
-  saveAdminSettings(){ const od=Math.max(1, Number(this.qs('#set_overdue').value)||30); const thr=Math.max(0, Number(this.qs('#set_threshold').value)||5); this.setSetting('overdue_days', od); this.setSetting('default_threshold', thr); this.flash('Réglages enregistrés'); },
-  async viewLogs(){ const logs=await this.fetchJSON('/api/logs?limit=200'); this.openModal('Journaux récents', `<div style="max-height:55vh;overflow:auto"><table class="table"><thead><tr><th>Date</th><th>Acteur</th><th>Action</th><th>Cible</th><th>Détails</th></tr></thead><tbody>${logs.map(l=>`<tr><td>${new Date(l.at).toLocaleString()}</td><td>${l.actor||'public'}</td><td>${l.action}</td><td>${l.entity}#${l.entity_id||''}</td><td class="muted">${l.details||''}</td></tr>`).join('')}</tbody></table></div>`); },
-  modalAddUser(){ this.openModal('Créer un utilisateur', `<div class="grid-3"><input id="u_name" class="input" placeholder="Nom"><input id="u_email" class="input" placeholder="Email"><input id="u_pass" class="input" type="password" placeholder="Mot de passe"></div><div class="chips" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.addUser()">Enregistrer</button></div>`); },
-  async addUser(){ const name=this.qs('#u_name').value.trim(), email=this.qs('#u_email').value.trim(), password=this.qs('#u_pass').value; if(!name||!email||!password) return this.flash('Tous les champs sont requis',false); try{ await this.fetchJSON('/api/users',{method:'POST', body: JSON.stringify({name,email,password,role:'admin'})}); this.closeModal(); this.renderAdmin(); this.flash('Compte admin créé'); } catch(e){ this.flash(e.message||'Création refusée'); } },
-  modalEditUser(id,u){ this.openModal('Modifier utilisateur', `<div class="grid-3"><input id="eu_name" class="input" value="${u.name}"><input id="eu_role" class="input" value="${u.role}"><input id="eu_pass" class="input" type="password" placeholder="Nouveau mot de passe (optionnel)"></div><div class="chips" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.saveUser(${id})">Enregistrer</button></div>`); },
-  async saveUser(id){ const name=this.qs('#eu_name').value.trim(), role=this.qs('#eu_role').value.trim(), password=this.qs('#eu_pass').value; try{ await this.fetchJSON('/api/users/'+id,{method:'PUT', body: JSON.stringify({name,role,password})}); this.closeModal(); this.renderAdmin(); this.flash('Compte mis à jour'); }catch(e){ this.flash(e.message||'Mise à jour refusée'); } },
-  async deleteUser(id){ if(!confirm('Supprimer ce compte ?')) return; try{ await this.fetchJSON('/api/users/'+id,{method:'DELETE'}); this.renderAdmin(); this.flash('Compte supprimé'); } catch(e){ this.flash(e.message||'Suppression refusée'); } },
-
-  // ------------------------------ Public (QR antenne) + filtres ------------------------------
-  async renderPretPublic(){
-    const el=this.qs('#pretPublic');
-    // Précharge les types pour l’antenne
-    const types = await this.fetchJSON(`/api/public/types${this.publicAntennaId?`?antenna_id=${this.publicAntennaId}`:''}`);
-    el.innerHTML = `<div class="card">
-      <h2>Prêt public</h2>
-      <div class="grid-3">
-        <input id='pubFN' class='input' placeholder='Prénom'>
-        <input id='pubLN' class='input' placeholder='Nom'>
-        <button class='btn btn-primary' onclick='App.findVolPublic()'>Chercher</button>
-      </div>
-      <div class="grid-3 mt">
-        <select id="pubType"><option value="">Tous types</option>${types.map(t=>`<option value="${t.id}">${t.label}</option>`).join('')}</select>
-        <select id="pubSize" disabled><option value="">Toutes tailles</option></select>
-        <button class="btn btn-ghost" id="pubFilterBtn">Filtrer le stock</button>
-      </div>
-      <div id='pubResult' class="mt"></div>
-    </div>`;
-
-    // Gestion dynamique des tailles en fonction du type
-    const typeSel = this.qs('#pubType');
-    const sizeSel = this.qs('#pubSize');
-    typeSel.onchange = async () => {
-      const typeId = typeSel.value;
-      if(!typeId){ sizeSel.innerHTML = `<option value="">Toutes tailles</option>`; sizeSel.disabled = true; return; }
-      const sizes = await this.fetchJSON(`/api/public/sizes?type_id=${typeId}${this.publicAntennaId?`&antenna_id=${this.publicAntennaId}`:''}`);
-      sizeSel.innerHTML = `<option value="">Toutes tailles</option>` + sizes.map(s=>`<option>${s}</option>`).join('');
-      sizeSel.disabled = false;
-    };
-
-    // Bouton Filtrer : met à jour la liste du stock si un bénévole est déjà affiché
-    this.qs('#pubFilterBtn').onclick = () => {
-      const box = this.qs('#pubResult');
-      if(box.dataset.volId){ // un bénévole est chargé
-        this.reloadPublicStock(Number(box.dataset.volId));
-      }else{
-        this.flash('Cherche d’abord un bénévole.');
-      }
-    };
-  },
-  async findVolPublic(){
-    const fn=this.qs('#pubFN').value; const ln=this.qs('#pubLN').value;
-    try { const v=await this.fetchJSON(`/api/public/volunteer?first_name=${encodeURIComponent(fn)}&last_name=${encodeURIComponent(ln)}`); await this.showVolPublic(v); }
-    catch { this.qs("#pubResult").innerHTML = '<p class="alert">Bénévole non trouvé</p>'; }
-  },
-  async buildPublicStockQuery(){
-    const typeId = this.qs('#pubType')?.value || '';
-    const size = this.qs('#pubSize')?.value || '';
-    const params = new URLSearchParams();
-    if(this.publicAntennaId) params.set('antenna_id', this.publicAntennaId);
-    if(typeId) params.set('type_id', typeId);
-    if(size) params.set('size', size);
-    return params.toString();
-  },
-  async reloadPublicStock(volId){
-    const q = await this.buildPublicStockQuery();
-    const stock = await this.fetchJSON(`/api/public/stock${q?`?${q}`:''}`);
-    const loans = await this.fetchJSON(`/api/public/loans?volunteer_id=${volId}`);
-    const elList = this.qs('#pubLists');
-    elList.innerHTML = `
-      <h4>Prêts en cours</h4>
-      <ul>${loans.map(l=>`<li>${l.type} ${l.size||''} depuis ${new Date(l.since).toLocaleDateString()} <button class='btn btn-ghost' onclick='App.returnLoanPublic(${l.id})'>Rendre</button></li>`).join('')}</ul>
-      <h4>Stock disponible</h4>
-      <ul>${stock.map(s=>`<li>${s.type} ${s.size||''} (${s.quantity}) <button class='btn btn-ghost' onclick='App.borrow(${volId},${s.id})'>Emprunter</button></li>`).join('')}</ul>
-    `;
-  },
-  async showVolPublic(v){
-    const el = this.qs('#pubResult');
-    el.dataset.volId = v.id;
-    el.innerHTML = `
-      <div class="card">
-        <h3>${v.first_name} ${v.last_name}</h3>
-        <div id="pubLists" class="mt"></div>
-      </div>`;
-    await this.reloadPublicStock(v.id);
-  },
-  async borrow(volId, stockId){ try{ await this.fetchJSON('/api/public/loan',{method:'POST', body: JSON.stringify({volunteer_id:volId, stock_item_id:stockId, qty:1})}); this.flash('Tenue empruntée'); await this.reloadPublicStock(volId); }catch(e){ this.flash(e.message||'Emprunt refusé'); } },
-  async returnLoanPublic(id){ try{ await this.fetchJSON('/api/public/return/'+id,{method:'POST'}); this.flash('Tenue rendue'); const box=this.qs('#pubResult'); if(box.dataset.volId){ await this.reloadPublicStock(Number(box.dataset.volId)); } }catch(e){ this.flash(e.message||'Retour refusé'); } },
+  csrf: null,
+  // pagination
+  stock: { page: 1, per_page: 25, q: "", items: [], sort: { key: "", dir: 1 }, total: 0, pages: 1 },
+  vols:  { page: 1, per_page: 25, q: "", items: [], sort: { key: "", dir: 1 }, total: 0, pages: 1 },
+  loans: [],
+  history: [],
+  charts: { stock: null, loans: null },
 };
 
-window.App = App;
+const $ = (sel, el=document) => el.querySelector(sel);
+const $$ = (sel, el=document) => Array.from(el.querySelectorAll(sel));
 
-// Boot
-document.addEventListener("DOMContentLoaded", () => {
-  const onEnter = (e) => { if (e.key === "Enter") { e.preventDefault(); App.login(); } };
-  const em = document.getElementById("loginEmail");
-  const pw = document.getElementById("loginPass");
-  if (em) em.addEventListener("keydown", onEnter);
-  if (pw) pw.addEventListener("keydown", onEnter);
-  App.init();
+function show(screenId){
+  $$(".screen").forEach(s => s.classList.add("hidden"));
+  $("#"+screenId).classList.remove("hidden");
+  // close mobile nav
+  $("#mainnav").classList.remove("open");
+}
+
+function toast(msg){ console.log("INFO:", msg); } // hook to add UI later
+
+// Debounce helper
+function debounce(fn, delay=300){
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(()=>fn(...args), delay); };
+}
+
+// Auth ------------------------------------------------------------------------
+async function whoami(){
+  const r = await fetch("/api/me");
+  const j = await r.json();
+  if (j.authenticated){
+    state.user = j.user;
+    state.csrf = r.headers.get("X-CSRF-Token") || j.csrf || state.csrf;
+    initApp();
+  }else{
+    state.csrf = r.headers.get("X-CSRF-Token") || j.csrf || state.csrf;
+    show("login");
+  }
+}
+
+async function post(url, body){
+  const r = await fetch(url, {
+    method: "POST",
+    headers: {"Content-Type":"application/json", "X-CSRF-Token": state.csrf || ""},
+    body: JSON.stringify(body || {})
+  });
+  if (!r.ok){ throw await r.json().catch(()=>({error: r.statusText})); }
+  state.csrf = r.headers.get("X-CSRF-Token") || state.csrf;
+  return r.json();
+}
+async function put(url, body){
+  const r = await fetch(url, {
+    method: "PUT",
+    headers: {"Content-Type":"application/json", "X-CSRF-Token": state.csrf || ""},
+    body: JSON.stringify(body || {})
+  });
+  if (!r.ok){ throw await r.json().catch(()=>({error: r.statusText})); }
+  state.csrf = r.headers.get("X-CSRF-Token") || state.csrf;
+  return r.json();
+}
+async function del(url){
+  const r = await fetch(url, { method: "DELETE", headers: {"X-CSRF-Token": state.csrf || ""}});
+  if (!r.ok){ throw await r.json().catch(()=>({error: r.statusText})); }
+  state.csrf = r.headers.get("X-CSRF-Token") || state.csrf;
+  return r.json();
+}
+
+// Login UI
+$("#loginBtn").addEventListener("click", async () => {
+  $("#loginError").textContent = "";
+  try{
+    const j = await post("/api/login", {email: $("#loginEmail").value, password: $("#loginPass").value});
+    state.user = j.user;
+    show("dashboard");
+    initApp();
+  }catch(e){
+    $("#loginError").textContent = e.error || "Erreur";
+  }
 });
+$("#logoutBtn").addEventListener("click", async () => {
+  try{ await post("/api/logout"); location.reload(); }catch(e){ toast(e.error); }
+});
+
+// Burger menu
+$("#burger").addEventListener("click", ()=> $("#mainnav").classList.toggle("open"));
+
+// Nav
+$$("[data-nav]").forEach(a => a.addEventListener("click", (ev)=>{
+  ev.preventDefault();
+  const id = a.getAttribute("href").slice(1);
+  show(id);
+  if (id === "dashboard") loadDashboard();
+  if (id === "stock") loadStock();
+  if (id === "volunteers") loadVolunteers();
+  if (id === "loans") loadLoans();
+  if (id === "inventory") {} // nothing
+  if (id === "history") loadHistory();
+}));
+
+// Dashboard (stats + charts) ---------------------------------------------------
+async function loadDashboard(){
+  const r1 = await fetch("/api/stats");
+  const s = await r1.json();
+  $("#statStock").textContent = s.total_stock;
+  $("#statLoans").textContent = s.open_loans;
+  $("#statVols").textContent = s.volunteers;
+
+  const r2 = await fetch("/api/stats/graph");
+  const g = await r2.json();
+
+  // Chart 1: stock per antenna (bar)
+  if (state.charts.stock) state.charts.stock.destroy();
+  const ctx1 = $("#chartStock").getContext("2d");
+  state.charts.stock = new Chart(ctx1, {
+    type: 'bar',
+    data: {
+      labels: g.stock_by_antenna.map(x=>x.label),
+      datasets: [{label:"Stock", data: g.stock_by_antenna.map(x=>x.value)}]
+    },
+    options: { responsive: true, maintainAspectRatio:false }
+  });
+
+  // Chart 2: loans per week (line)
+  if (state.charts.loans) state.charts.loans.destroy();
+  const ctx2 = $("#chartLoans").getContext("2d");
+  state.charts.loans = new Chart(ctx2, {
+    type: 'line',
+    data: {
+      labels: g.loans_per_week.map(x=>x.label),
+      datasets: [{label:"Prêts/semaine", data: g.loans_per_week.map(x=>x.value)}]
+    },
+    options: { responsive: true, maintainAspectRatio:false }
+  });
+}
+
+// Stock (search + pagination + sorting) ---------------------------------------
+async function loadStock(){
+  const p = state.stock;
+  const url = `/api/stock?page=${p.page}&per_page=${p.per_page}&q=${encodeURIComponent(p.q)}`
+  const r = await fetch(url);
+  const j = await r.json();
+  p.items = j.items; p.total = j.total; p.pages = j.pages; p.page = j.page;
+  renderStock();
+}
+function renderStock(){
+  const tbody = $("#stock tbody"); tbody.innerHTML = "";
+  const items = sortBy(state.stock.items, state.stock.sort);
+  for (const it of items){
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${it.garment_type || ""}</td>
+      <td>${it.antenna || ""}</td>
+      <td>${it.size || ""}</td>
+      <td class="right">${it.quantity}</td>
+      <td>${(it.tags||[]).join(", ")}</td>`;
+    tbody.appendChild(tr);
+  }
+  $("#stockPageInfo").textContent = `Page ${state.stock.page}/${state.stock.pages}`;
+}
+// Search with debounce
+$("#stockSearch").addEventListener("input", debounce(ev => {
+  state.stock.q = ev.target.value.trim();
+  state.stock.page = 1;
+  loadStock();
+}, 300));
+// Pager
+$("#stock .pager [data-page='prev']").addEventListener("click", ()=>{ if (state.stock.page>1){ state.stock.page--; loadStock(); }});
+$("#stock .pager [data-page='next']").addEventListener("click", ()=>{ if (state.stock.page<state.stock.pages){ state.stock.page++; loadStock(); }});
+// Export
+$("#exportStock").addEventListener("click", ()=>{ window.location = "/api/export/stock"; });
+
+// Volunteers (search + pagination + sorting) ----------------------------------
+async function loadVolunteers(){
+  const p = state.vols;
+  const url = `/api/volunteers?page=${p.page}&per_page=${p.per_page}&q=${encodeURIComponent(p.q)}`;
+  const r = await fetch(url);
+  const j = await r.json();
+  p.items = j.items; p.total = j.total; p.pages = j.pages; p.page = j.page;
+  renderVolunteers();
+}
+function renderVolunteers(){
+  const tbody = $("#volunteers tbody"); tbody.innerHTML = "";
+  const items = sortBy(state.vols.items, state.vols.sort);
+  for (const v of items){
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${v.last_name}</td><td>${v.first_name}</td><td>${v.note||""}</td>`;
+    tbody.appendChild(tr);
+  }
+  $("#volPageInfo").textContent = `Page ${state.vols.page}/${state.vols.pages}`;
+}
+$("#volSearch").addEventListener("input", debounce(ev => {
+  state.vols.q = ev.target.value.trim();
+  state.vols.page = 1;
+  loadVolunteers();
+}, 300));
+$("#volunteers .pager [data-page='prev']").addEventListener("click", ()=>{ if (state.vols.page>1){ state.vols.page--; loadVolunteers(); }});
+$("#volunteers .pager [data-page='next']").addEventListener("click", ()=>{ if (state.vols.page<state.vols.pages){ state.vols.page++; loadVolunteers(); }});
+
+// Loans (export + list simple) -------------------------------------------------
+async function loadLoans(){
+  const r = await fetch("/api/loans?open=0");
+  state.loans = await r.json();
+  renderLoans();
+}
+function renderLoans(){
+  const tbody = $("#loans tbody"); tbody.innerHTML = "";
+  const items = sortBy(state.loans, { key: "" , dir: 1 });
+  for (const l of items){
+    const st = l.stock_item || {};
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${l.volunteer || ""}</td>
+      <td>${[st.garment_type, st.antenna, st.size].filter(Boolean).join(" / ")}</td>
+      <td class="right">${l.quantity}</td>
+      <td>${formatDate(l.loan_date)}</td>
+      <td>${l.return_date ? formatDate(l.return_date) : ""}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+$("#exportLoans").addEventListener("click", ()=>{ window.location = "/api/export/loans"; });
+
+// Inventory -------------------------------------------------------------------
+$("#invStart").addEventListener("click", async ()=>{
+  const antenna_id = parseInt($("#invAntennaId").value||"0",10);
+  if (!antenna_id) return alert("Saisir l'id antenne");
+  try{
+    const j = await post("/api/inventory/start", {antenna_id});
+    $("#invArea").classList.remove("hidden");
+    $("#invSession").textContent = j.session_id;
+    loadInvItems(j.session_id);
+  }catch(e){ alert(e.error||"Erreur"); }
+});
+async function loadInvItems(session_id){
+  const r = await fetch(`/api/inventory/${session_id}/items`);
+  const items = await r.json();
+  const tbody = $("#invItems tbody"); tbody.innerHTML = "";
+  for (const it of items){
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${it.garment_type}</td><td>${it.antenna}</td><td>${it.size||""}</td>
+      <td class="right">${it.quantity}</td>
+      <td><input type="number" value="${it.quantity}" data-sid="${it.id}" style="width:8ch"></td>
+      <td class="right" data-delta="delta">0</td>`;
+    const input = $("input", tr);
+    input.addEventListener("change", async (ev)=>{
+      const counted = parseInt(ev.target.value||"0",10);
+      const j = await post(`/api/inventory/${$("#invSession").textContent}/count`, {stock_item_id: it.id, counted});
+      $("[data-delta='delta']", tr).textContent = j.delta;
+    });
+    tbody.appendChild(tr);
+  }
+}
+$("#invClose").addEventListener("click", async ()=>{
+  const sid = $("#invSession").textContent;
+  if (!sid) return;
+  await post(`/api/inventory/${sid}/close`);
+  alert("Session clôturée");
+});
+
+// History ---------------------------------------------------------------------
+async function loadHistory(){
+  const r = await fetch("/api/inventories/history");
+  state.history = await r.json();
+  const tbody = $("#history tbody"); tbody.innerHTML = "";
+  for (const h of sortBy(state.history, {key:"started_at", dir:-1})){
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${formatDate(h.started_at)}</td>
+      <td>${h.closed_at ? formatDate(h.closed_at) : ""}</td>
+      <td>${h.antenna}</td>
+      <td>${h.user}</td>
+      <td class="right">${h.total_delta}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+// Sorting helper --------------------------------------------------------------
+function sortBy(list, sort){
+  if (!sort || !sort.key) return list.slice();
+  return list.slice().sort((a,b)=>{
+    const av = (a[sort.key] ?? "").toString().toLowerCase();
+    const bv = (b[sort.key] ?? "").toString().toLowerCase();
+    if (av < bv) return -1 * sort.dir;
+    if (av > bv) return  1 * sort.dir;
+    return 0;
+  });
+}
+// Clickable headers
+$$(".table.sortable thead").forEach(th=>{
+  th.addEventListener("click", ev=>{
+    const el = ev.target.closest("[data-sort]");
+    if (!el) return;
+    const key = el.getAttribute("data-sort");
+    const table = el.closest("table").dataset.table;
+    const block = table === "stock" ? state.stock : table === "volunteers" ? state.vols :
+                  table === "loans" ? { sort: { key:"loan_date", dir:-1 } } :
+                  table === "history" ? { sort:{ key:"started_at", dir:-1 } } : null;
+    if (!block) return;
+    if (block.sort.key === key){ block.sort.dir *= -1; } else { block.sort.key = key; block.sort.dir = 1; }
+    if (table === "stock") renderStock();
+    if (table === "volunteers") renderVolunteers();
+    if (table === "loans") renderLoans();
+    if (table === "history") loadHistory();
+  });
+});
+
+// Utils -----------------------------------------------------------------------
+function formatDate(iso){
+  try{ const d = new Date(iso); return d.toLocaleString(); }catch(e){ return ""; }
+}
+
+// Init ------------------------------------------------------------------------
+function initApp(){
+  // default screen
+  show("dashboard");
+  loadDashboard();
+  // preload lists
+  loadStock();
+  loadVolunteers();
+  loadLoans();
+  loadHistory();
+}
+
+whoami();
