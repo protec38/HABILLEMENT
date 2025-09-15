@@ -666,13 +666,22 @@ def api_stats_graph():
     ).group_by(Antenna.name).order_by(Antenna.name.asc()).all()
     stock_by_antenna = [{"label": n, "value": int(s or 0)} for (n, s) in per_ant]
 
-    # Loans by week for the last 12 weeks
+        # Loans by week for the last 12 weeks
     since = datetime.utcnow() - timedelta(weeks=12)
-    loans = db.session.query(
-        func.strftime('%Y-%W', Loan.loan_date) if 'sqlite' in DATABASE_URL else func.to_char(Loan.loan_date, 'IYYY-IW'),
-        func.count(Loan.id)
-    ).filter(Loan.loan_date >= since).group_by(1).order_by(1.asc()).all()
+    if 'sqlite' in DATABASE_URL:
+        week_expr = func.strftime('%Y-%W', Loan.loan_date)
+    else:
+        week_expr = func.to_char(Loan.loan_date, 'IYYY-IW')
+
+    loans = (
+        db.session.query(week_expr.label("week"), func.count(Loan.id))
+        .filter(Loan.loan_date >= since)
+        .group_by("week")
+        .order_by(week_expr.asc())
+        .all()
+    )
     loan_series = [{"label": k, "value": int(v)} for (k, v) in loans]
+
 
     return jsonify({"stock_by_antenna": stock_by_antenna, "loans_per_week": loan_series})
 
