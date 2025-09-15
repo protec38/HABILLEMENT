@@ -72,20 +72,30 @@ const App = {
   async login() {
     const email = document.getElementById("loginEmail").value.trim();
     const password = document.getElementById("loginPass").value;
-    const err = document.getElementById("loginErr");
-    err.textContent = "";
-    if (!email || !password) { err.textContent = "Email et mot de passe requis"; return; }
+    const err = document.getElementById("loginError"); // <-- corrigé
+    if (err) err.classList.remove("hidden"), err.textContent = "";
+    if (!email || !password) {
+      if (err) { err.textContent = "Email et mot de passe requis"; err.classList.remove("hidden"); }
+      else alert("Email et mot de passe requis");
+      return;
+    }
     try {
       const res = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
       if (res.ok) { location.reload(); return; }
-      err.textContent = "Identifiants invalides";
-    } catch(e) { err.textContent = e.message || "Erreur de connexion"; }
+      const data = await res.json().catch(()=>({}));
+      const msg = data.error || "Identifiants invalides";
+      if (err) { err.textContent = msg; err.classList.remove("hidden"); }
+      else alert(msg);
+    } catch(e) {
+      if (err) { err.textContent = e.message || "Erreur de connexion"; err.classList.remove("hidden"); }
+      else alert(e.message || "Erreur de connexion");
+    }
   },
   logout() { location.href = "/api/logout"; },
 
   // ------------------------------- Nav / Pages -------------------------------
   show(id) {
-    document.querySelectorAll(".page").forEach((p) => p.style.display = (p.id === id ? "block" : "none"));
+    document.querySelectorAll(".page, .screen").forEach((p) => p.style.display = (p.id === id ? "block" : "none"));
     document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.id === id));
     if (id === "dashboard") this.renderDashboard();
     if (id === "antennes") this.renderAntennes();
@@ -115,18 +125,13 @@ const App = {
       this.fetchJSON('/api/stock'),
     ]);
 
-    // seuils antennes
     const byAntenna = {};
     const byType = {};
     stock.forEach(s => { byAntenna[s.antenna] = (byAntenna[s.antenna] || 0) + s.quantity; byType[s.garment_type] = (byType[s.garment_type] || 0) + s.quantity; });
 
     const lowStock = [];
     const ants = await this.fetchJSON('/api/antennas');
-    ants.forEach(a => {
-      const total = Object.entries(stock).filter(([_,v])=>v).length;
-      const sum = Object.values(stock).reduce((acc, v) => acc + (v?.quantity || 0), 0);
-      void(total); void(sum);
-    });
+    ants.forEach(a => { void a; });
 
     const el=this.qs('#dashboard'); el.innerHTML=`
       <div class="card">
@@ -293,7 +298,7 @@ const App = {
     document.getElementById('volImportFile').addEventListener('change',(e)=>this.importVolCSV(e.target.files[0]));
   },
   filterVol(){ const q=(this.qs('#volSearch').value||'').trim().toLowerCase(); if(!q){ this.renderVolList(this._volLocal); return; }
-    const f=this._volLocal.filter(v=>[v.last_name, v.first_name, v.note||''].join(' ').toLowerCase().includes(q)); this.renderVolList(f); },
+    const f=this._volLocal.filter(v=>[v.last_name, v.first_name, (v.note||'')].join(' ').toLowerCase().includes(q)); this.renderVolList(f); },
   renderVolList(list){ const el=this.qs('#volList'); el.innerHTML=list.length? `<table class="table">
       <thead><tr><th>Nom</th><th>Prénom</th><th>Note</th><th>Prêts</th><th>Actions</th></tr></thead>
       <tbody>${list.map(v=>`<tr>
@@ -438,7 +443,6 @@ const App = {
       <div id="pubStock" class="mt"></div>
     </div>`;
 
-    // Pré-remplir types selon antenne
     this.publicAntennaId = Number(this.qs('#pub_ant').value);
     this.qs('#pub_ant').addEventListener('change', ()=>{ this.publicAntennaId = Number(this.qs('#pub_ant').value); this.pubLoadTypes(); this.pubReload(); });
     await this.pubLoadTypes();
