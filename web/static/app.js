@@ -177,6 +177,7 @@ const App = {
     el.innerHTML=`<div class="card">
       <div class="chips" style="justify-content:space-between"><h2>Stock</h2>
         <div class="chips">
+          <button class="btn btn-export" onclick="App.exportStockCSV()">⭳ Export CSV</button>
           <button class="btn btn-ghost" onclick="App.modalAddType()">+ Type</button>
           <button class="btn btn-primary" onclick="App.modalAddStock()">+ Article</button>
         </div>
@@ -196,6 +197,32 @@ const App = {
   modalEditStock(id,s){ this.openModal('Modifier un article de stock', `<div class="grid-4"><select id="es_type">${this._optType(s.type_id)}</select><select id="es_ant">${this._optAnt(s.ant_id)}</select><input id="es_size" class="input" value="${s.size||''}" placeholder="Taille"><input id="es_qty" class="input" type="number" value="${s.qty}" min="0"></div><div class="mt"><input id="es_tags" class="input" value="${(s.tags||[]).join(', ')}" placeholder="Tags séparés par des virgules"></div><div class="chips" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.saveEditStock(${id})">Enregistrer</button></div>`); },
   async saveEditStock(id){ const body={ garment_type_id:Number(this.qs('#es_type').value), antenna_id:Number(this.qs('#es_ant').value), size:this.qs('#es_size').value.trim()||null, quantity:Number(this.qs('#es_qty').value||0), tags:this.qs('#es_tags').value.split(',').map(x=>x.trim()).filter(Boolean) }; try{ await this.fetchJSON('/api/stock/'+id,{method:'PUT', body: JSON.stringify(body)}); this.closeModal(); this.loadStock(); this.flash('Article mis à jour'); }catch(e){ this.flash(e.message||'Mise à jour refusée'); } },
   async deleteStock(id){ if(!confirm('Supprimer cet article ?')) return; try{ await this.fetchJSON('/api/stock/'+id,{method:'DELETE'}); await this.loadStock(); this.flash('Article supprimé'); } catch(e){ this.flash(e.message||'Suppression impossible'); } },
+
+  async exportStockCSV(){
+    const t=this.qs('#f_type')?.value||'';
+    const a=this.qs('#f_ant')?.value||'';
+    const params=new URLSearchParams();
+    if(t) params.set('type_id', t);
+    if(a) params.set('antenna_id', a);
+    const url='/api/stock/export'+(params.toString()?`?${params.toString()}`:'');
+    try{
+      const res=await fetch(url);
+      if(!res.ok) throw new Error('Export impossible');
+      const blob=await res.blob();
+      const link=document.createElement('a');
+      const stamp=new Date();
+      link.href=URL.createObjectURL(blob);
+      link.download=`stock_protection_civile_${stamp.toISOString().slice(0,10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(()=>URL.revokeObjectURL(link.href), 1200);
+      this.flash('Export CSV généré');
+    }catch(e){
+      console.error(e);
+      this.flash(e.message||'Export impossible');
+    }
+  },
 
   // ------------------------------ Bénévoles (CRUD + recherche + import) ------------------------------
   _volLocal: [],
