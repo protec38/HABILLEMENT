@@ -548,20 +548,43 @@ const App = {
     const el=this.qs('#pretPublic');
     // Précharge les types pour l’antenne
     const types = await this.fetchJSON(`/api/public/types${this.publicAntennaId?`?antenna_id=${this.publicAntennaId}`:''}`);
-    el.innerHTML = `<div class="card">
-      <h2>Prêt public</h2>
-      <div class="grid-3">
-        <input id='pubFN' class='input' placeholder='Prénom'>
-        <input id='pubLN' class='input' placeholder='Nom'>
-        <button class='btn btn-primary' onclick='App.findVolPublic()'>Chercher</button>
-      </div>
-      <div class="grid-3 mt">
-        <select id="pubType"><option value="">Tous types</option>${types.map(t=>`<option value="${t.id}">${t.label}</option>`).join('')}</select>
-        <select id="pubSize" disabled><option value="">Toutes tailles</option></select>
-        <button class="btn btn-ghost" id="pubFilterBtn">Filtrer le stock</button>
-      </div>
-      <div id='pubResult' class="mt"></div>
-    </div>`;
+    el.innerHTML = `
+      <section class="public-hero">
+        <div>
+          <h1>Prêt public</h1>
+          <p>Gérez les prêts d'une antenne depuis une interface claire : recherchez un bénévole, consultez ses prêts en cours et choisissez immédiatement la tenue à lui attribuer.</p>
+        </div>
+        <div class="public-card">
+          <div class="public-search-grid">
+            <input id='pubFN' class='input' placeholder='Prénom'>
+            <input id='pubLN' class='input' placeholder='Nom'>
+            <button type="button" class='btn btn-primary' onclick='App.findVolPublic()'>Chercher</button>
+          </div>
+          <p class="helper-text">Astuce : seuls quelques caractères suffisent pour retrouver un bénévole.</p>
+        </div>
+      </section>
+      <section class="public-layout">
+        <div class="card public-card">
+          <h2>Filtrer le stock disponible</h2>
+          <div class="public-filters-grid">
+            <label class="field"><span>Type</span><select id="pubType"><option value="">Tous types</option>${types.map(t=>`<option value="${t.id}">${t.label}</option>`).join('')}</select></label>
+            <label class="field"><span>Taille</span><select id="pubSize" disabled><option value="">Toutes tailles</option></select></label>
+          </div>
+          <div class="chips" style="justify-content:flex-end">
+            <button type="button" class="btn btn-ghost" id="pubFilterBtn">Mettre à jour la liste</button>
+          </div>
+          <p class="helper-text">Le filtre s’applique au stock présenté pour le bénévole sélectionné.</p>
+        </div>
+        <div id='pubResult' class="card public-card">
+          <div class="empty-state">
+            <h3>Recherchez un bénévole</h3>
+            <p>Saisissez un nom pour afficher ses prêts en cours et la disponibilité de l’antenne.</p>
+          </div>
+        </div>
+      </section>`;
+
+    const resultBox = this.qs('#pubResult');
+    if (resultBox) delete resultBox.dataset.volId;
 
     // Gestion dynamique des tailles en fonction du type
     const typeSel = this.qs('#pubType');
@@ -587,7 +610,13 @@ const App = {
   async findVolPublic(){
     const fn=this.qs('#pubFN').value; const ln=this.qs('#pubLN').value;
     try { const v=await this.fetchJSON(`/api/public/volunteer?first_name=${encodeURIComponent(fn)}&last_name=${encodeURIComponent(ln)}`); await this.showVolPublic(v); }
-    catch { this.qs("#pubResult").innerHTML = '<p class="alert">Bénévole non trouvé</p>'; }
+    catch {
+      const box = this.qs('#pubResult');
+      if (box) {
+        delete box.dataset.volId;
+        box.innerHTML = `<div class="empty-state"><h3>Bénévole non trouvé</h3><p>Vérifiez l’orthographe ou essayez avec un autre prénom/nom.</p></div>`;
+      }
+    }
   },
   async buildPublicStockQuery(){
     const typeId = this.qs('#pubType')?.value || '';
@@ -603,20 +632,45 @@ const App = {
     const stock = await this.fetchJSON(`/api/public/stock${q?`?${q}`:''}`);
     const loans = await this.fetchJSON(`/api/public/loans?volunteer_id=${volId}`);
     const elList = this.qs('#pubLists');
+    const loansHTML = loans.length ? loans.map(l=>`
+        <li>
+          <div>
+            <strong>${l.type} ${l.size||''}</strong>
+            <small>Depuis le ${new Date(l.since).toLocaleDateString()}</small>
+          </div>
+          <button class='btn btn-ghost' onclick='App.returnLoanPublic(${l.id})'>Rendre</button>
+        </li>`).join('') : `<li class="public-empty">Aucun prêt en cours</li>`;
+    const stockHTML = stock.length ? stock.map(s=>`
+        <li>
+          <div>
+            <strong>${s.type} ${s.size||''}</strong>
+            <small>${s.quantity} en stock</small>
+          </div>
+          <button class='btn btn-primary' onclick='App.borrow(${volId},${s.id})'>Emprunter</button>
+        </li>`).join('') : `<li class="public-empty">Aucun article correspondant</li>`;
     elList.innerHTML = `
-      <h4>Prêts en cours</h4>
-      <ul>${loans.map(l=>`<li>${l.type} ${l.size||''} depuis ${new Date(l.since).toLocaleDateString()} <button class='btn btn-ghost' onclick='App.returnLoanPublic(${l.id})'>Rendre</button></li>`).join('')}</ul>
-      <h4>Stock disponible</h4>
-      <ul>${stock.map(s=>`<li>${s.type} ${s.size||''} (${s.quantity}) <button class='btn btn-ghost' onclick='App.borrow(${volId},${s.id})'>Emprunter</button></li>`).join('')}</ul>
+      <div class="public-lists">
+        <div>
+          <h4>Prêts en cours</h4>
+          <ul>${loansHTML}</ul>
+        </div>
+        <div>
+          <h4>Stock disponible</h4>
+          <ul>${stockHTML}</ul>
+        </div>
+      </div>
     `;
   },
   async showVolPublic(v){
     const el = this.qs('#pubResult');
     el.dataset.volId = v.id;
     el.innerHTML = `
-      <div class="card">
-        <h3>${v.first_name} ${v.last_name}</h3>
-        <div id="pubLists" class="mt"></div>
+      <div class="public-volunteer">
+        <div>
+          <h3>${v.first_name} ${v.last_name}</h3>
+          <p class="helper-text">Sélectionnez une tenue ci-dessous pour enregistrer un prêt instantanément.</p>
+        </div>
+        <div id="pubLists"></div>
       </div>`;
     await this.reloadPublicStock(v.id);
   },
