@@ -524,8 +524,65 @@ const App = {
   async importVolunteersCSV(file){ try{ const fd=new FormData(); fd.append('file', file, file.name); const res=await fetch('/api/volunteers/import',{method:'POST', body: fd}); const data=await res.json(); if(!res.ok) throw new Error((data&&(data.error||data.message))||'Import refusé'); this.flash(`Import: +${data.added} ajoutés, ${data.skipped} ignorés (${data.total} lignes)`); await this.renderBenevoles(); } catch(e){ this.flash(e.message||'Erreur import CSV'); } },
 
   // ------------------------------ Prêts ------------------------------
-  async renderPrets(){ const el=this.qs('#prets'); const r=await this.fetchJSON('/api/loans/open'); el.innerHTML=`<div class="card"><h2>Prêts en cours</h2><table class="table"><thead><tr><th>Bénévole</th><th>Article</th><th>Qté</th><th>Depuis</th><th></th></tr></thead><tbody>${r.map(l=>`<tr><td>${l.volunteer}</td><td>${l.type} / ${l.size||'—'} @ ${l.antenna}</td><td>${l.qty}</td><td>${new Date(l.since).toLocaleString()}</td><td><button class="btn btn-ghost" onclick="App.returnLoan(${l.id})">Marquer rendu</button></td></tr>`).join('')}</tbody></table></div>`; },
+  async renderPrets(){
+    const el=this.qs('#prets');
+    if(!el) return;
+    el.innerHTML=`<div class="card"><p class="muted">Chargement des prêts…</p></div>`;
+    try{
+      const loans=await this.fetchJSON('/api/loans/open');
+      const rows=loans.length?loans.map(l=>`
+            <tr>
+              <td>${l.volunteer}</td>
+              <td>${l.type} / ${l.size||'—'} @ ${l.antenna}</td>
+              <td>${l.qty}</td>
+              <td>${this.formatDateTime(l.since)}</td>
+              <td><button class="btn btn-ghost" onclick="App.returnLoan(${l.id})">Marquer rendu</button></td>
+            </tr>
+          `).join(''):`<tr><td colspan="5" class="muted" style="text-align:center;padding:1.2rem 0;">Aucun prêt en cours</td></tr>`;
+      el.innerHTML=`
+        <div class="card">
+          <div class="card-header">
+            <h2>Prêts en cours</h2>
+            <button class="btn btn-primary" onclick="App.showLoanHistory()">Historique des prêts</button>
+          </div>
+          <table class="table">
+            <thead>
+              <tr><th>Bénévole</th><th>Article</th><th>Qté</th><th>Depuis</th><th></th></tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+    }catch(e){
+      el.innerHTML=`<div class="card"><p class="alert">${e.message||'Impossible de charger les prêts'}</p></div>`;
+    }
+  },
   async returnLoan(id){ try{ await this.fetchJSON('/api/loans/return/'+id,{method:'POST'}); this.renderPrets(); this.flash('Prêt rendu'); }catch(e){ this.flash(e.message||'Action refusée'); } },
+  async showLoanHistory(){
+    try{
+      const history=await this.fetchJSON('/api/loans/history?limit=200');
+      const rows=history.length?history.map(l=>`
+            <tr>
+              <td>${l.volunteer}</td>
+              <td>${l.type} / ${l.size||'—'} @ ${l.antenna}</td>
+              <td>${l.qty}</td>
+              <td>${this.formatDateTime(l.created_at)}</td>
+              <td>${l.returned_at?this.formatDateTime(l.returned_at):'<span class="badge badge-danger">En cours</span>'}</td>
+            </tr>
+          `).join(''):`<tr><td colspan="5" class="muted" style="text-align:center;padding:1.2rem 0;">Aucun prêt trouvé</td></tr>`;
+      const body=`
+        <div style="max-height:60vh;overflow:auto;">
+          <table class="table">
+            <thead>
+              <tr><th>Bénévole</th><th>Article</th><th>Qté</th><th>Emprunté le</th><th>Rendu le</th></tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+      this.openModal('Historique des prêts', body);
+    }catch(e){
+      this.openModal('Historique des prêts', `<p class="alert">${e.message||'Impossible de charger l\'historique des prêts'}</p>`);
+    }
+  },
 
   // ------------------------------ Inventaire ------------------------------
   async renderInventaire(){ const el=this.qs('#inventaire'); const ants=await this.fetchJSON('/api/antennas'); el.innerHTML=`<div class="card"><h2>Inventaire / Audit</h2><div class="grid-2"><select id="inv_ant">${['<option value="">Choisir une antenne</option>'].concat(ants.map(a=>`<option value="${a.id}">${a.name}</option>`)).join('')}</select><button class="btn btn-primary" onclick="App.startInventory()">Démarrer</button></div><div id="invZone" class="mt"></div></div>`; },
