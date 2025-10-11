@@ -2,7 +2,7 @@ import os
 import time
 import csv
 from io import StringIO
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import Flask, jsonify, request, render_template, Response
 from flask_sqlalchemy import SQLAlchemy
@@ -28,6 +28,9 @@ app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", "f
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = "index"
+
+DEFAULT_LOW_STOCK_THRESHOLD = int(os.environ.get("DEFAULT_LOW_STOCK_THRESHOLD", "5"))
+DASHBOARD_OVERDUE_DAYS = int(os.environ.get("DASHBOARD_OVERDUE_DAYS", "30"))
 
 # ---------------------------------------------------------------------
 # Models
@@ -225,10 +228,236 @@ def me():
 @app.get("/api/stats")
 @login_required
 def stats():
-    stock_total = db.session.query(db.func.coalesce(db.func.sum(StockItem.quantity), 0)).scalar()
-    loans_open = Loan.query.filter(Loan.returned_at.is_(None)).count()
+    stock_total = db.session.query(db.func.coalesce(db.func.sum(StockItem.quantity), 0)).scalar() or 0
+    loans_open_q = Loan.query.filter(Loan.returned_at.is_(None))
+    loans_open = loans_open_q.count()
     volunteers = Volunteer.query.count()
-    return jsonify({"stock_total": stock_total, "prets_ouverts": loans_open, "benevoles": volunteers})
+    types_count = GarmentType.query.count()
+    antennas_count = Antenna.query.count()
+    active_volunteers = (
+        db.session.query(db.func.count(db.func.distinct(Loan.volunteer_id)))
+        .filter(Loan.returned_at.is_(None))
+        .scalar()
+        or 0
+    )
+
+    antenna_rows = []
+    antenna_q = (
+        db.session.query(
+            Antenna.id,
+            Antenna.name,
+            Antenna.low_stock_threshold,
+            db.func.coalesce(db.func.sum(StockItem.quantity), 0),
+        )
+        .outerjoin(StockItem)
+        .group_by(Antenna.id)
+        .order_by(Antenna.name)
+    )
+    for ant_id, name, threshold, qty in antenna_q:
+        antenna_rows.append(
+            {
+                "id": ant_id,
+                "name": name,
+                "total_qty": int(qty or 0),
+                "threshold": threshold,
+                "is_below_threshold": threshold is not None and (qty or 0) <= threshold,
+            }
+        )
+
+    type_rows = []
+    type_q = (
+        db.session.query(
+            GarmentType.id,
+            GarmentType.label,
+            db.func.coalesce(db.func.sum(StockItem.quantity), 0),
+        )
+        .outerjoin(StockItem)
+        .group_by(GarmentType.id)
+        .order_by(db.func.coalesce(db.func.sum(StockItem.quantity), 0).desc(), GarmentType.label)
+    )
+    for type_id, label, qty in type_q:
+        type_rows.append({"id": type_id, "label": label, "total_qty": int(qty or 0)})
+
+    low_stock_items = []
+    low_stock_q = (
+        db.session.query(
+            StockItem.id,
+            GarmentType.label,
+            GarmentType.id,
+            Antenna.name,
+            Antenna.id,
+            StockItem.size,
+            StockItem.quantity,
+            Antenna.low_stock_threshold,
+        )
+        .join(GarmentType)
+        .join(Antenna)
+        .filter(
+            StockItem.quantity
+            <= db.func.coalesce(Antenna.low_stock_threshold, DEFAULT_LOW_STOCK_THRESHOLD)
+        )
+        .order_by(StockItem.quantity.asc(), GarmentType.label.asc())
+        .limit(20)
+    )
+    for (sid, type_label, type_id, antenna_name, antenna_id, size, qty, threshold) in low_stock_q:
+        low_stock_items.append(
+            {
+                "id": sid,
+                "garment_type": type_label,
+                "garment_type_id": type_id,
+                "antenna": antenna_name,
+                "antenna_id": antenna_id,
+                "size": size,
+                "quantity": int(qty or 0),
+                "antenna_threshold": threshold,
+            }
+        )
+
+    stock_snapshot = []
+    stock_q = (
+        db.session.query(
+            StockItem.id,
+            StockItem.quantity,
+            StockItem.size,
+            StockItem.tags_text,
+            StockItem.antenna_id,
+            StockItem.garment_type_id,
+            GarmentType.label,
+            Antenna.name,
+        )
+        .join(GarmentType)
+        .join(Antenna)
+    )
+    for (sid, qty, size, tags_text, antenna_id, type_id, type_label, antenna_name) in stock_q:
+        stock_snapshot.append(
+            {
+                "id": sid,
+                "quantity": int(qty or 0),
+                "size": size,
+                "tags": text_to_tags(tags_text),
+                "antenna_id": antenna_id,
+                "antenna": antenna_name,
+                "garment_type_id": type_id,
+                "garment_type": type_label,
+            }
+        )
+
+    open_loans_data = []
+    for l in loans_open_q.order_by(Loan.created_at.asc()).all():
+        open_loans_data.append(
+            {
+                "id": l.id,
+                "qty": l.qty,
+                "since": l.created_at.isoformat(),
+                "volunteer": f"{l.volunteer.first_name} {l.volunteer.last_name}".strip(),
+                "volunteer_id": l.volunteer_id,
+                "antenna": l.stock_item.antenna.name,
+                "antenna_id": l.stock_item.antenna_id,
+                "type": l.stock_item.garment_type.label,
+                "garment_type_id": l.stock_item.garment_type_id,
+                "size": l.stock_item.size,
+            }
+        )
+
+    now = datetime.utcnow()
+    current_month = datetime(now.year, now.month, 1)
+    month_starts = []
+    for _ in range(6):
+        month_starts.append(current_month)
+        current_month = (current_month - timedelta(days=1)).replace(day=1)
+    month_starts = list(reversed(month_starts))
+    month_keys = [m.strftime("%Y-%m") for m in month_starts]
+    created_counts = {k: 0 for k in month_keys}
+    returned_counts = {k: 0 for k in month_keys}
+    if month_starts:
+        earliest = month_starts[0]
+        relevant_loans = Loan.query.filter(Loan.created_at >= earliest).all()
+        for loan in relevant_loans:
+            key = loan.created_at.strftime("%Y-%m")
+            if key in created_counts:
+                created_counts[key] += 1
+            if loan.returned_at:
+                rkey = loan.returned_at.strftime("%Y-%m")
+                if rkey in returned_counts:
+                    returned_counts[rkey] += 1
+    loan_activity = []
+    for m in month_starts:
+        key = m.strftime("%Y-%m")
+        loan_activity.append(
+            {
+                "month": key,
+                "label": m.strftime("%b %Y"),
+                "created": created_counts.get(key, 0),
+                "returned": returned_counts.get(key, 0),
+            }
+        )
+
+    recent_loans = []
+    for loan in Loan.query.order_by(Loan.created_at.desc()).limit(8):
+        recent_loans.append(
+            {
+                "id": loan.id,
+                "volunteer": f"{loan.volunteer.first_name} {loan.volunteer.last_name}".strip(),
+                "volunteer_id": loan.volunteer_id,
+                "type": loan.stock_item.garment_type.label if loan.stock_item else "",
+                "garment_type_id": loan.stock_item.garment_type_id if loan.stock_item else None,
+                "size": loan.stock_item.size if loan.stock_item else None,
+                "antenna": loan.stock_item.antenna.name if loan.stock_item else "",
+                "antenna_id": loan.stock_item.antenna_id if loan.stock_item else None,
+                "qty": loan.qty,
+                "created_at": loan.created_at.isoformat(),
+                "returned_at": loan.returned_at.isoformat() if loan.returned_at else None,
+            }
+        )
+
+    recent_logs = []
+    for log in Log.query.order_by(Log.at.desc()).limit(10):
+        recent_logs.append(
+            {
+                "id": log.id,
+                "at": log.at.isoformat(),
+                "actor": log.actor,
+                "action": log.action,
+                "entity": log.entity,
+                "entity_id": log.entity_id,
+                "details": log.details,
+            }
+        )
+
+    type_options = [
+        {"id": t.id, "label": t.label, "has_size": t.has_size}
+        for t in GarmentType.query.order_by(GarmentType.label).all()
+    ]
+    antenna_options = [
+        {
+            "id": a.id,
+            "name": a.name,
+            "low_stock_threshold": a.low_stock_threshold,
+        }
+        for a in Antenna.query.order_by(Antenna.name).all()
+    ]
+
+    return jsonify(
+        {
+            "stock_total": int(stock_total),
+            "prets_ouverts": loans_open,
+            "benevoles": volunteers,
+            "types": types_count,
+            "antennas": antennas_count,
+            "active_volunteers": active_volunteers,
+            "stock_by_antenna": antenna_rows,
+            "stock_by_type": type_rows,
+            "low_stock_items": low_stock_items,
+            "stock_snapshot": stock_snapshot,
+            "open_loans": open_loans_data,
+            "loan_activity": loan_activity,
+            "recent_loans": recent_loans,
+            "recent_logs": recent_logs,
+            "type_options": type_options,
+            "antenna_options": antenna_options,
+            "overdue_default": DASHBOARD_OVERDUE_DAYS,
+        }
+    )
 
 # ---------------------------------------------------------------------
 # Antennas
@@ -502,17 +731,20 @@ def stock_delete(item_id):
     s = db.session.get(StockItem, item_id)
     if not s:
         return jsonify({"ok": False}), 404
-    # Bloque si des prêts existent (ouverts ou historiques)
-    if Loan.query.filter_by(stock_item_id=item_id).first():
-        return jsonify({"ok": False, "error": "Impossible : cet article a des prêts associés."}), 400
+    removed_loans = 0
+    loans = Loan.query.filter_by(stock_item_id=item_id).all()
+    for loan in loans:
+        removed_loans += 1
+        log_action("loan.delete.with_stock", "loan", loan.id, f"stock_item={item_id}")
+        db.session.delete(loan)
     try:
         db.session.delete(s)
+        log_action("stock.delete", "stock", item_id, f"delete loans={removed_loans}")
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
         return jsonify({"ok": False, "error": "Suppression refusée (contraintes liées)."}), 400
-    log_action("stock.delete", "stock", item_id, "delete")
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "removed_loans": removed_loans})
 
 # ---------------------------------------------------------------------
 # Volunteers (liste + recherche + import CSV + CRUD)

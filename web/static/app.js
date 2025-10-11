@@ -13,6 +13,8 @@ const App = {
     { id: "admin", label: "Administration", auth: true },
     { id: "pretPublic", label: "Prêt publique", auth: false },
   ],
+  dashboardData: null,
+  dashboardState: null,
 
   // ------------------------------- Utils -------------------------------
   qs: (s) => document.querySelector(s),
@@ -35,6 +37,11 @@ const App = {
   daysBetween(a, b) { return Math.round((b - a) / (1000 * 60 * 60 * 24)); },
   getSetting(key, def) { try { const v = localStorage.getItem("pc:" + key); return v !== null ? JSON.parse(v) : def; } catch { return def; } },
   setSetting(key, val) { try { localStorage.setItem("pc:" + key, JSON.stringify(val)); } catch {} },
+  formatNumber(n) { return (Number.isFinite(n) ? n : 0).toLocaleString("fr-FR"); },
+  formatDateTime(value) {
+    try { return new Date(value).toLocaleString(); }
+    catch { return value || ""; }
+  },
 
   // ------------------------------ Nav / Login ------------------------------
   show(id) {
@@ -109,50 +116,299 @@ const App = {
     document.body.classList.remove("no-scroll");
   },
 
-  // ------------------------------ Dashboard (abrégé) ------------------------------
+  // ------------------------------ Dashboard enrichi ------------------------------
   async renderDashboard() {
-    const [stats, ants, stock, openLoans] = await Promise.all([
-      this.fetchJSON("/api/stats").catch(() => ({ stock_total: 0, prets_ouverts: 0, benevoles: 0 })),
-      this.fetchJSON("/api/antennas").catch(() => []),
-      this.fetchJSON("/api/stock").catch(() => []),
-      this.fetchJSON("/api/loans/open").catch(() => []),
-    ]);
-    const overdueDays = this.getSetting("overdue_days", 30);
-    const now = Date.now();
-    const overdue = openLoans.map(l => ({ ...l, days: this.daysBetween(new Date(l.since).getTime(), now) })).filter(l => l.days > overdueDays);
-    const antThreshold = Object.fromEntries(ants.map(a => [a.id, (a.low_stock_threshold ?? this.getSetting("default_threshold", 5))]));
-    const lowStock = stock.filter(s => s.quantity <= (antThreshold[s.antenna_id] ?? 5));
-    const byAntenna = {}, byType = {};
-    stock.forEach(s => { byAntenna[s.antenna] = (byAntenna[s.antenna] || 0) + s.quantity; byType[s.garment_type] = (byType[s.garment_type] || 0) + s.quantity; });
-
-    const el=this.qs('#dashboard'); el.innerHTML=`
-      <div class="card">
-        <h2>Tableau de bord</h2>
-        <div class="grid-3">
-          <div>Total stock: <b>${stats.stock_total}</b></div>
-          <div>Prêts ouverts: <b>${stats.prets_ouverts}</b></div>
-          <div>Bénévoles: <b>${stats.benevoles}</b></div>
-        </div>
-        <div class="grid-2 mt">
-          <div>
-            <h3>Alertes stock bas</h3>
-            ${lowStock.length?`<table class="table"><thead><tr><th>Type</th><th>Taille</th><th>Antenne</th><th>Qté</th></tr></thead>
-              <tbody>${lowStock.map(s=>`<tr><td>${s.garment_type}</td><td>${s.size||'—'}</td><td>${s.antenna}</td><td><span class="badge">${s.quantity}</span></td></tr>`).join('')}</tbody></table>`:`<p class="muted">Aucune alerte.</p>`}
-          </div>
-          <div>
-            <div class="chips" style="justify-content:space-between">
-              <h3>Retards de prêt</h3>
-              <button class="btn btn-ghost" onclick="App.setOverdue()">Seuil: ${overdueDays} j</button>
-            </div>
-            ${overdue.length?`<table class="table"><thead><tr><th>Bénévole</th><th>Article</th><th>Jours</th><th></th></tr></thead>
-              <tbody>${overdue.map(l=>`<tr><td>${l.volunteer}</td><td>${l.type} ${l.size||''}</td>
-              <td><span class="badge badge-danger">${l.days}</span></td>
-              <td><button class="btn btn-ghost" onclick="App.returnLoan(${l.id})">Rendu</button></td></tr>`).join('')}</tbody></table>`:`<p class="muted">Aucun retard.</p>`}
-          </div>
-        </div>
-      </div>`;
+    const el = this.qs('#dashboard');
+    if (el) el.innerHTML = `<div class="card"><p class="muted">Chargement du tableau de bord…</p></div>`;
+    try {
+      const data = await this.fetchJSON('/api/stats');
+      this.dashboardData = data;
+      this.ensureDashboardState();
+      this.drawDashboard();
+    } catch (e) {
+      if (el) el.innerHTML = `<div class="card"><p class="alert">${e.message || 'Impossible de charger le tableau de bord'}</p></div>`;
+    }
   },
-  setOverdue(){ const cur=this.getSetting('overdue_days',30); const v=prompt('Nombre de jours avant retard ?', String(cur)); if(!v) return; const n=Math.max(1, parseInt(v,10)||30); this.setSetting('overdue_days', n); this.flash('Seuil mis à jour'); this.renderDashboard(); },
+  ensureDashboardState() {
+    const baseDays = this.dashboardData?.overdue_default || 30;
+    if (!this.dashboardState) {
+      this.dashboardState = {
+        lowOnly: this.getSetting('dash_low_only', false),
+        selectedType: 'all',
+        selectedAntenna: 'all',
+        overdueDays: this.getSetting('overdue_days', baseDays),
+      };
+    } else if (typeof this.dashboardState.overdueDays === 'undefined') {
+      this.dashboardState.overdueDays = this.getSetting('overdue_days', baseDays);
+    }
+  },
+  aggregateStockByType(antennaId) {
+    if (!this.dashboardData) return [];
+    if (!antennaId || antennaId === 'all') {
+      return [...(this.dashboardData.stock_by_type || [])];
+    }
+    const map = new Map();
+    (this.dashboardData.stock_snapshot || []).forEach((item) => {
+      if (item.antenna_id !== antennaId) return;
+      if (!map.has(item.garment_type_id)) {
+        map.set(item.garment_type_id, { id: item.garment_type_id, label: item.garment_type, total_qty: 0 });
+      }
+      const entry = map.get(item.garment_type_id);
+      entry.total_qty += item.quantity || 0;
+    });
+    return Array.from(map.values()).sort((a, b) => b.total_qty - a.total_qty);
+  },
+  aggregateStockByAntenna(typeId) {
+    if (!this.dashboardData) return [];
+    if (!typeId || typeId === 'all') {
+      return [...(this.dashboardData.stock_by_antenna || [])];
+    }
+    const thresholdMap = new Map((this.dashboardData.antenna_options || []).map((a) => [a.id, a.low_stock_threshold]));
+    const map = new Map();
+    (this.dashboardData.stock_snapshot || []).forEach((item) => {
+      if (item.garment_type_id !== typeId) return;
+      if (!map.has(item.antenna_id)) {
+        map.set(item.antenna_id, { id: item.antenna_id, name: item.antenna, total_qty: 0 });
+      }
+      map.get(item.antenna_id).total_qty += item.quantity || 0;
+    });
+    return Array.from(map.values()).map((row) => {
+      const thr = thresholdMap.get(row.id);
+      return {
+        ...row,
+        threshold: thr,
+        is_below_threshold: typeof thr === 'number' ? row.total_qty <= thr : false,
+      };
+    }).sort((a, b) => b.total_qty - a.total_qty);
+  },
+  drawDashboard() {
+    const el = this.qs('#dashboard');
+    if (!el) return;
+    const data = this.dashboardData;
+    if (!data) {
+      el.innerHTML = `<div class="card"><p class="alert">Aucune donnée disponible</p></div>`;
+      return;
+    }
+    const state = this.dashboardState || {};
+    const selectedType = state.selectedType === 'all' ? null : Number(state.selectedType);
+    const selectedAntenna = state.selectedAntenna === 'all' ? null : Number(state.selectedAntenna);
+    const lowOnly = !!state.lowOnly;
+    const antennaOptions = data.antenna_options || [];
+    const typeOptions = data.type_options || [];
+
+    const antennaStats = this.aggregateStockByAntenna(selectedType || 'all').filter((row) => !lowOnly || row.is_below_threshold);
+    const typeStats = this.aggregateStockByType(selectedAntenna || 'all');
+    const maxAntennaQty = Math.max(1, ...antennaStats.map((r) => r.total_qty || 0));
+    const maxTypeQty = Math.max(1, ...typeStats.map((r) => r.total_qty || 0));
+
+    const lowStockItems = (data.low_stock_items || []).filter((item) => {
+      if (selectedAntenna && item.antenna_id !== selectedAntenna) return false;
+      if (selectedType && item.garment_type_id !== selectedType) return false;
+      return true;
+    });
+
+    const overdueDays = Math.max(1, Number(state.overdueDays) || (data.overdue_default || 30));
+    const now = new Date();
+    const openLoansWithAge = (data.open_loans || []).map((l) => ({
+      ...l,
+      days: this.daysBetween(new Date(l.since), now),
+    })).sort((a, b) => b.days - a.days);
+    const overdueLoans = openLoansWithAge.filter((l) => l.days >= overdueDays);
+    const topOpenLoans = openLoansWithAge.slice(0, 6);
+
+    const activity = data.loan_activity || [];
+    const maxActivity = Math.max(1, ...activity.map((a) => Math.max(a.created || 0, a.returned || 0)));
+    const activityBars = activity.map((item) => {
+      const createdHeight = Math.round(((item.created || 0) / maxActivity) * 100);
+      const returnedHeight = Math.round(((item.returned || 0) / maxActivity) * 100);
+      return `<div class="chart-column"><div class="chart-pair"><span class="chart-bar" style="height:${createdHeight}%"></span><span class="chart-bar chart-bar-returned" style="height:${returnedHeight}%"></span></div><span class="chart-label">${item.label}</span><small>${item.created || 0} sortis • ${item.returned || 0} rendus</small></div>`;
+    }).join('');
+
+    const lowAntennaCount = (data.stock_by_antenna || []).filter((a) => a.is_below_threshold).length;
+    const loansThisMonth = activity.slice(-1)[0]?.created || 0;
+
+    const antennaOptionsHTML = ['<option value="all">Toutes les antennes</option>']
+      .concat(antennaOptions.map((a) => `<option value="${a.id}">${a.name}</option>`)).join('');
+    const typeOptionsHTML = ['<option value="all">Tous les types</option>']
+      .concat(typeOptions.map((t) => `<option value="${t.id}">${t.label}</option>`)).join('');
+
+    const antennaRowsHTML = antennaStats.length ? antennaStats.map((row) => `
+      <div class="stat-row">
+        <div class="stat-row-head">
+          <span>${row.name}</span>
+          <span class="muted">${this.formatNumber(row.total_qty)} pièces</span>
+        </div>
+        <div class="progress ${row.is_below_threshold ? 'warning' : ''}"><span style="width:${Math.round(((row.total_qty || 0) / maxAntennaQty) * 100)}%"></span></div>
+        ${typeof row.threshold === 'number' ? `<small class="muted">Seuil ${row.threshold}</small>` : ''}
+      </div>`).join('') : '<p class="muted">Aucune donnée disponible avec ces filtres.</p>';
+
+    const typeRowsHTML = typeStats.length ? typeStats.map((row) => `
+      <div class="stat-row">
+        <div class="stat-row-head">
+          <span>${row.label}</span>
+          <span class="muted">${this.formatNumber(row.total_qty)}</span>
+        </div>
+        <div class="progress"><span style="width:${Math.round(((row.total_qty || 0) / maxTypeQty) * 100)}%"></span></div>
+      </div>`).join('') : '<p class="muted">Aucun type trouvé.</p>';
+
+    const lowStockHTML = lowStockItems.length ? `
+      <table class="table"><thead><tr><th>Article</th><th>Antenne</th><th>Qté</th></tr></thead><tbody>
+        ${lowStockItems.map((item) => `<tr><td>${item.garment_type} ${item.size || ''}</td><td>${item.antenna}</td><td><span class="badge badge-danger">${item.quantity}</span></td></tr>`).join('')}
+      </tbody></table>` : '<p class="muted">Aucun article sous le seuil avec les filtres actuels.</p>';
+
+    const overdueHTML = overdueLoans.length ? `
+      <table class="table"><thead><tr><th>Bénévole</th><th>Article</th><th>Jours</th><th></th></tr></thead><tbody>
+        ${overdueLoans.slice(0, 6).map((loan) => `<tr><td>${loan.volunteer}</td><td>${loan.type} ${loan.size || ''}</td><td><span class="badge badge-danger">${loan.days}</span></td><td><button class="btn btn-ghost" onclick="App.returnLoan(${loan.id})">Rendu</button></td></tr>`).join('')}
+      </tbody></table>` : '<p class="muted">Aucun prêt en retard au-delà du seuil.</p>';
+
+    const openHTML = topOpenLoans.length ? `
+      <table class="table"><thead><tr><th>Bénévole</th><th>Article</th><th>Jours</th></tr></thead><tbody>
+        ${topOpenLoans.map((loan) => `<tr><td>${loan.volunteer}</td><td>${loan.type} ${loan.size || ''}</td><td>${loan.days}</td></tr>`).join('')}
+      </tbody></table>` : '<p class="muted">Aucun prêt en cours.</p>';
+
+    const recentLoansHTML = (data.recent_loans || []).length ? `
+      <table class="table"><thead><tr><th>Bénévole</th><th>Article</th><th>Qté</th><th>Statut</th></tr></thead><tbody>
+        ${(data.recent_loans || []).map((loan) => `<tr><td>${loan.volunteer}</td><td>${loan.type} ${loan.size || ''}</td><td>${loan.qty}</td><td>${loan.returned_at ? '<span class="badge badge-green">Rendu</span>' : '<span class="badge">En cours</span>'}</td></tr>`).join('')}
+      </tbody></table>` : '<p class="muted">Aucun mouvement récent.</p>';
+
+    const recentLogsHTML = (data.recent_logs || []).length ? `
+      <table class="table"><thead><tr><th>Date</th><th>Acteur</th><th>Action</th></tr></thead><tbody>
+        ${(data.recent_logs || []).map((log) => `<tr><td>${this.formatDateTime(log.at)}</td><td>${log.actor || '—'}</td><td>${log.action} ${log.entity ? '(' + log.entity + (log.entity_id ? '#' + log.entity_id : '') + ')' : ''}</td></tr>`).join('')}
+      </tbody></table>` : '<p class="muted">Aucun journal récent.</p>';
+
+    el.innerHTML = `
+      <div class="dashboard-grid">
+        <div class="kpi-card">
+          <span class="kpi-label">Articles en stock</span>
+          <span class="kpi-value">${this.formatNumber(data.stock_total)}</span>
+          <span class="kpi-sub">${this.formatNumber(data.types)} types suivis</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">Prêts ouverts</span>
+          <span class="kpi-value">${this.formatNumber(data.prets_ouverts)}</span>
+          <span class="kpi-sub">${this.formatNumber(loansThisMonth)} sorties ce mois</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">Bénévoles actifs</span>
+          <span class="kpi-value">${this.formatNumber(data.active_volunteers)}</span>
+          <span class="kpi-sub">${this.formatNumber(data.benevoles)} bénévoles enregistrés</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">Antennes</span>
+          <span class="kpi-value">${this.formatNumber(data.antennas)}</span>
+          <span class="kpi-sub">${lowAntennaCount} antennes sous le seuil</span>
+        </div>
+      </div>
+
+      <div class="dashboard-columns">
+        <div class="card">
+          <div class="chips dashboard-toolbar">
+            <h3>Répartition par antenne</h3>
+            <div class="chips">
+              <select id="dashFilterType">${typeOptionsHTML}</select>
+              <button class="btn btn-ghost" id="dashLowToggle"></button>
+            </div>
+          </div>
+          ${antennaRowsHTML}
+        </div>
+        <div class="card">
+          <div class="chips dashboard-toolbar">
+            <h3>Répartition par type</h3>
+            <select id="dashFilterAntenna">${antennaOptionsHTML}</select>
+          </div>
+          ${typeRowsHTML}
+        </div>
+      </div>
+
+      <div class="dashboard-columns">
+        <div class="card">
+          <div class="chips" style="justify-content:space-between">
+            <h3>Activité prêts (6 mois)</h3>
+            <button class="btn btn-ghost" id="dashRefresh">↻ Actualiser</button>
+          </div>
+          ${activityBars ? `<div class="chart-bars">${activityBars}</div>` : '<p class="muted">Pas encore de données.</p>'}
+        </div>
+        <div class="card">
+          <div class="chips" style="justify-content:space-between">
+            <h3>Articles sous le seuil</h3>
+            <button class="btn btn-ghost" id="dashResetFilters">Réinitialiser les filtres</button>
+          </div>
+          ${lowStockHTML}
+        </div>
+      </div>
+
+      <div class="dashboard-columns">
+        <div class="card">
+          <div class="chips" style="justify-content:space-between">
+            <h3>Prêts à relancer</h3>
+            <label class="muted">Seuil <input id="dashOverdueInput" class="input input-inline" type="number" min="1" value="${overdueDays}"> jours</label>
+          </div>
+          ${overdueHTML}
+          <div class="mt">
+            <h4>Prêts les plus anciens</h4>
+            ${openHTML}
+          </div>
+        </div>
+        <div class="card">
+          <h3>Mouvements récents</h3>
+          ${recentLoansHTML}
+          <div class="mt">
+            <h4>Derniers journaux</h4>
+            ${recentLogsHTML}
+          </div>
+        </div>
+      </div>
+    `;
+
+    const typeSelect = this.qs('#dashFilterType');
+    if (typeSelect) {
+      typeSelect.value = state.selectedType || 'all';
+      typeSelect.onchange = (ev) => {
+        this.dashboardState.selectedType = ev.target.value || 'all';
+        this.drawDashboard();
+      };
+    }
+    const antennaSelect = this.qs('#dashFilterAntenna');
+    if (antennaSelect) {
+      antennaSelect.value = state.selectedAntenna || 'all';
+      antennaSelect.onchange = (ev) => {
+        this.dashboardState.selectedAntenna = ev.target.value || 'all';
+        this.drawDashboard();
+      };
+    }
+    const lowToggle = this.qs('#dashLowToggle');
+    if (lowToggle) {
+      lowToggle.textContent = lowOnly ? 'Afficher toutes les antennes' : 'Filtrer antennes sous seuil';
+      lowToggle.onclick = () => {
+        this.dashboardState.lowOnly = !this.dashboardState.lowOnly;
+        this.setSetting('dash_low_only', this.dashboardState.lowOnly);
+        this.drawDashboard();
+      };
+    }
+    const overdueInput = this.qs('#dashOverdueInput');
+    if (overdueInput) {
+      overdueInput.onchange = (ev) => {
+        const val = Math.max(1, parseInt(ev.target.value, 10) || overdueDays);
+        this.dashboardState.overdueDays = val;
+        this.setSetting('overdue_days', val);
+        this.drawDashboard();
+      };
+    }
+    const resetBtn = this.qs('#dashResetFilters');
+    if (resetBtn) {
+      resetBtn.onclick = () => {
+        this.dashboardState.selectedType = 'all';
+        this.dashboardState.selectedAntenna = 'all';
+        this.drawDashboard();
+      };
+    }
+    const refreshBtn = this.qs('#dashRefresh');
+    if (refreshBtn) {
+      refreshBtn.onclick = () => {
+        this.renderDashboard();
+      };
+    }
+  },
 
   // ------------------------------ Antennes ------------------------------
   async renderAntennes(){ const el=this.qs('#antennes'); const ants=await this.fetchJSON('/api/antennas'); el.innerHTML=`<div class="card">
@@ -196,7 +452,19 @@ const App = {
   async saveStock(){ const t=Number(this.qs('#s_type').value); const a=Number(this.qs('#s_ant').value); const size=this.qs('#s_size').value.trim()||null; const qty=Number(this.qs('#s_qty').value||0); const tags=this.qs('#s_tags').value.split(',').map(x=>x.trim()).filter(Boolean); if(!t||!a||qty<=0) return this.flash('Type, antenne et quantité requis',false); try{ await this.fetchJSON('/api/stock',{method:'POST', body: JSON.stringify({garment_type_id:t, antenna_id:a, size, quantity:qty, tags})}); this.closeModal(); this.loadStock(); this.flash('Stock ajouté'); }catch(e){ this.flash(e.message||'Erreur ajout stock'); } },
   modalEditStock(id,s){ this.openModal('Modifier un article de stock', `<div class="grid-4"><select id="es_type">${this._optType(s.type_id)}</select><select id="es_ant">${this._optAnt(s.ant_id)}</select><input id="es_size" class="input" value="${s.size||''}" placeholder="Taille"><input id="es_qty" class="input" type="number" value="${s.qty}" min="0"></div><div class="mt"><input id="es_tags" class="input" value="${(s.tags||[]).join(', ')}" placeholder="Tags séparés par des virgules"></div><div class="chips" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.saveEditStock(${id})">Enregistrer</button></div>`); },
   async saveEditStock(id){ const body={ garment_type_id:Number(this.qs('#es_type').value), antenna_id:Number(this.qs('#es_ant').value), size:this.qs('#es_size').value.trim()||null, quantity:Number(this.qs('#es_qty').value||0), tags:this.qs('#es_tags').value.split(',').map(x=>x.trim()).filter(Boolean) }; try{ await this.fetchJSON('/api/stock/'+id,{method:'PUT', body: JSON.stringify(body)}); this.closeModal(); this.loadStock(); this.flash('Article mis à jour'); }catch(e){ this.flash(e.message||'Mise à jour refusée'); } },
-  async deleteStock(id){ if(!confirm('Supprimer cet article ?')) return; try{ await this.fetchJSON('/api/stock/'+id,{method:'DELETE'}); await this.loadStock(); this.flash('Article supprimé'); } catch(e){ this.flash(e.message||'Suppression impossible'); } },
+  async deleteStock(id){
+    if(!confirm('Supprimer cet article ?')) return;
+    try{
+      const res = await this.fetchJSON('/api/stock/'+id,{method:'DELETE'});
+      await this.loadStock();
+      const removed = res && typeof res.removed_loans === 'number' ? res.removed_loans : 0;
+      const msg = removed > 0 ? `Article supprimé (${removed} prêt(s) associé(s) clos)` : 'Article supprimé';
+      this.flash(msg);
+      if(this.dashboardData){ this.renderDashboard(); }
+    } catch(e){
+      this.flash(e.message||'Suppression impossible');
+    }
+  },
 
   async exportStockCSV(){
     const t=this.qs('#f_type')?.value||'';
