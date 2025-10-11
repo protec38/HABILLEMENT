@@ -445,7 +445,7 @@ const App = {
   async loadStock(){ const t=this.qs('#f_type')?.value||''; const a=this.qs('#f_ant')?.value||''; const qs=[]; if(t) qs.push(`type_id=${t}`); if(a) qs.push(`antenna_id=${a}`); const stock=await this.fetchJSON('/api/stock'+(qs.length?`?${qs.join('&')}`:'')); this.qs('#stockTable').innerHTML=`<table class="table"><thead><tr><th>Type</th><th>Taille</th><th>Antenne</th><th>Qté</th><th>Tags</th><th></th></tr></thead><tbody>${stock.map(s=>`<tr><td>${s.garment_type}</td><td>${s.size||'—'}</td><td>${s.antenna}</td><td>${s.quantity}</td><td>${this.renderTagsInline(s.tags||[])}</td><td class="chips"><button class="btn btn-ghost" onclick='App.modalEditStock(${s.id}, ${JSON.stringify({id:s.id,type_id:s.garment_type_id,ant_id:s.antenna_id,size:s.size||"",qty:s.quantity,tags:s.tags||[]}).replaceAll("'","&apos;")})'>Modifier</button><button class="btn btn-ghost" onclick="App.deleteStock(${s.id})">Supprimer</button></td></tr>`).join('')}</tbody></table>`; },
   renderTagsInline(tags){ tags=Array.isArray(tags)? tags: String(tags||'').split(',').map(x=>x.trim()).filter(Boolean); if(!tags.length) return `<span class="muted">—</span>`; return `<div class="chips">${tags.map(t=>`<span class="badge">${t}</span>`).join('')}</div>`; },
   modalAddType(){ this.openModal('Ajouter un type', `<div class="grid-2"><input id="new_type" class="input" placeholder="Libellé (ex: Parka)"><label><input id="new_has_size" type="checkbox" checked> Avec taille</label></div><div class="chips" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.saveType()">Enregistrer</button></div><div class="mt"><button class="btn btn-ghost" onclick="App.manageTypes()">Gérer / Supprimer</button></div>`); },
-  async manageTypes(){ const types=await this.fetchJSON('/api/types'); const body=`<table class="table"><thead><tr><th>Type</th><th>Taille ?</th><th></th></tr></thead><tbody>${types.map(t=>`<tr><td>${t.label}</td><td>${t.has_size?'Oui':'Non'}</td><td><button class="btn btn-ghost" onclick="App.deleteType(${t.id})">Supprimer</button></td></tr>`).join('')}</tbody></table>`; this.openModal('Types existants', body); },
+  async manageTypes(){ const types=await this.fetchJSON('/api/types'); const body=`<div style="max-height:60vh;overflow:auto;"><table class="table"><thead><tr><th>Type</th><th>Taille ?</th><th></th></tr></thead><tbody>${types.map(t=>`<tr><td>${t.label}</td><td>${t.has_size?'Oui':'Non'}</td><td><button class="btn btn-ghost" onclick="App.deleteType(${t.id})">Supprimer</button></td></tr>`).join('')}</tbody></table></div>`; this.openModal('Types existants', body); },
   async deleteType(id){ if(!confirm('Supprimer ce type ?\n(Refusé s’il existe du stock)')) return; try{ await this.fetchJSON('/api/types/'+id,{method:'DELETE'}); this.flash('Type supprimé'); this.closeModal(); this.renderStock(); } catch(e){ this.flash(e.message||'Suppression refusée'); } },
   async saveType(){ const label=this.qs('#new_type').value.trim(); const has_size=this.qs('#new_has_size').checked; if(!label) return this.flash('Libellé requis',false); try{ await this.fetchJSON('/api/types',{method:'POST', body: JSON.stringify({label,has_size})}); this.closeModal(); this.renderStock(); this.flash('Type ajouté'); }catch(e){ this.flash(e.message||'Création refusée'); }},
   modalAddStock(){ this.openModal('Ajouter au stock', `<div class="grid-4"><select id="s_type">${this._optType('')}</select><select id="s_ant">${this._optAnt('')}</select><input id="s_size" class="input" placeholder="Taille (optionnel)"><input id="s_qty" class="input" type="number" value="1" min="1" placeholder="Quantité"></div><div class="mt"><input id="s_tags" class="input" placeholder="Tags séparés par des virgules (ex: Hiver, EPS)"></div><div class="chips" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.saveStock()">Enregistrer</button></div>`); },
@@ -567,13 +567,14 @@ const App = {
               <td>${l.qty}</td>
               <td>${this.formatDateTime(l.created_at)}</td>
               <td>${l.returned_at?this.formatDateTime(l.returned_at):'<span class="badge badge-danger">En cours</span>'}</td>
+              <td class="chips"><button class="btn btn-ghost" onclick="App.deleteLoan(${l.id})">Supprimer</button></td>
             </tr>
-          `).join(''):`<tr><td colspan="5" class="muted" style="text-align:center;padding:1.2rem 0;">Aucun prêt trouvé</td></tr>`;
+          `).join(''):`<tr><td colspan="6" class="muted" style="text-align:center;padding:1.2rem 0;">Aucun prêt trouvé</td></tr>`;
       const body=`
         <div style="max-height:60vh;overflow:auto;">
           <table class="table">
             <thead>
-              <tr><th>Bénévole</th><th>Article</th><th>Qté</th><th>Emprunté le</th><th>Rendu le</th></tr>
+              <tr><th>Bénévole</th><th>Article</th><th>Qté</th><th>Emprunté le</th><th>Rendu le</th><th></th></tr>
             </thead>
             <tbody>${rows}</tbody>
           </table>
@@ -581,6 +582,18 @@ const App = {
       this.openModal('Historique des prêts', body);
     }catch(e){
       this.openModal('Historique des prêts', `<p class="alert">${e.message||'Impossible de charger l\'historique des prêts'}</p>`);
+    }
+  },
+
+  async deleteLoan(id){
+    if(!confirm('Supprimer ce prêt ?')) return;
+    try{
+      await this.fetchJSON('/api/loans/'+id,{method:'DELETE'});
+      this.flash('Prêt supprimé');
+      this.renderPrets();
+      this.showLoanHistory();
+    }catch(e){
+      this.flash(e.message||'Suppression refusée');
     }
   },
 
@@ -603,12 +616,19 @@ const App = {
   // ------------------------------ Public (QR antenne) + filtres ------------------------------
   async renderPretPublic(){
     const el=this.qs('#pretPublic');
+    let antennaName='';
+    if(this.publicAntennaId){
+      try{
+        const info=await this.fetchJSON(`/api/public/antenna/${this.publicAntennaId}`);
+        antennaName=info.name||'';
+      }catch{}
+    }
     // Précharge les types pour l’antenne
     const types = await this.fetchJSON(`/api/public/types${this.publicAntennaId?`?antenna_id=${this.publicAntennaId}`:''}`);
     el.innerHTML = `
       <section class="public-hero">
         <div>
-          <h1>Prêt public</h1>
+          <h1>Prêt public${antennaName?` <span class="badge">${antennaName}</span>`:''}</h1>
           <p>Gérez les prêts d'une antenne depuis une interface claire : recherchez un bénévole, consultez ses prêts en cours et choisissez immédiatement la tenue à lui attribuer.</p>
         </div>
         <div class="public-card">
@@ -617,11 +637,10 @@ const App = {
             <input id='pubLN' class='input' placeholder='Nom'>
             <button type="button" class='btn btn-primary' onclick='App.findVolPublic()'>Chercher</button>
           </div>
-          <p class="helper-text">Astuce : seuls quelques caractères suffisent pour retrouver un bénévole.</p>
         </div>
       </section>
       <section class="public-layout">
-        <div class="card public-card">
+        <div id="publicFilters" class="card public-card hidden">
           <h2>Filtrer le stock disponible</h2>
           <div class="public-filters-grid">
             <label class="field"><span>Type</span><select id="pubType"><option value="">Tous types</option>${types.map(t=>`<option value="${t.id}">${t.label}</option>`).join('')}</select></label>
@@ -642,6 +661,8 @@ const App = {
 
     const resultBox = this.qs('#pubResult');
     if (resultBox) delete resultBox.dataset.volId;
+    const filterCard=this.qs('#publicFilters');
+    if(filterCard) filterCard.classList.add('hidden');
 
     // Gestion dynamique des tailles en fonction du type
     const typeSel = this.qs('#pubType');
@@ -673,6 +694,8 @@ const App = {
         delete box.dataset.volId;
         box.innerHTML = `<div class="empty-state"><h3>Bénévole non trouvé</h3><p>Vérifiez l’orthographe ou essayez avec un autre prénom/nom.</p></div>`;
       }
+      const filters=this.qs('#publicFilters');
+      if(filters) filters.classList.add('hidden');
     }
   },
   async buildPublicStockQuery(){
@@ -729,6 +752,8 @@ const App = {
         </div>
         <div id="pubLists"></div>
       </div>`;
+    const filters=this.qs('#publicFilters');
+    if(filters) filters.classList.remove('hidden');
     await this.reloadPublicStock(v.id);
   },
   async borrow(volId, stockId){ try{ await this.fetchJSON('/api/public/loan',{method:'POST', body: JSON.stringify({volunteer_id:volId, stock_item_id:stockId, qty:1})}); this.flash('Tenue empruntée'); await this.reloadPublicStock(volId); }catch(e){ this.flash(e.message||'Emprunt refusé'); } },
