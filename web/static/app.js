@@ -662,7 +662,17 @@ const App = {
     const resultBox = this.qs('#pubResult');
     if (resultBox) delete resultBox.dataset.volId;
     const filterCard=this.qs('#publicFilters');
+    const firstNameInput = this.qs('#pubFN');
+    const lastNameInput = this.qs('#pubLN');
+    const updatePublicFiltersVisibility = () => {
+      if(!filterCard) return;
+      const show = Boolean(firstNameInput?.value.trim()) && Boolean(lastNameInput?.value.trim());
+      filterCard.classList.toggle('hidden', !show);
+    };
     if(filterCard) filterCard.classList.add('hidden');
+    if(firstNameInput) firstNameInput.addEventListener('input', updatePublicFiltersVisibility);
+    if(lastNameInput) lastNameInput.addEventListener('input', updatePublicFiltersVisibility);
+    updatePublicFiltersVisibility();
 
     // Gestion dynamique des tailles en fonction du type
     const typeSel = this.qs('#pubType');
@@ -695,7 +705,11 @@ const App = {
         box.innerHTML = `<div class="empty-state"><h3>Bénévole non trouvé</h3><p>Vérifiez l’orthographe ou essayez avec un autre prénom/nom.</p></div>`;
       }
       const filters=this.qs('#publicFilters');
-      if(filters) filters.classList.add('hidden');
+      if(filters){
+        const fnFilled = Boolean(this.qs('#pubFN')?.value.trim());
+        const lnFilled = Boolean(this.qs('#pubLN')?.value.trim());
+        filters.classList.toggle('hidden', !(fnFilled && lnFilled));
+      }
     }
   },
   async buildPublicStockQuery(){
