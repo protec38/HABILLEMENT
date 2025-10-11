@@ -416,6 +416,43 @@ def stock_list():
         )
     return jsonify(out)
 
+
+@app.get("/api/stock/export")
+@login_required
+def stock_export():
+    qry = StockItem.query.join(GarmentType).join(Antenna)
+    t = request.args.get("type_id", type=int)
+    a = request.args.get("antenna_id", type=int)
+    if t:
+        qry = qry.filter(StockItem.garment_type_id == t)
+    if a:
+        qry = qry.filter(StockItem.antenna_id == a)
+    qry = qry.order_by(GarmentType.label.asc(), StockItem.size.asc(), Antenna.name.asc())
+
+    buffer = StringIO()
+    writer = csv.writer(buffer, delimiter=";")
+    writer.writerow(["Protection Civile - Inventaire des tenues"])
+    writer.writerow(["Palette", "Bleu PC #0b3b6e", "Orange PC #f28800"])
+    writer.writerow([])
+    writer.writerow(["Type", "Taille", "Antenne", "Quantité", "Tags"])
+    for s in qry.all():
+        tags = text_to_tags(s.tags_text)
+        writer.writerow(
+            [
+                s.garment_type.label,
+                s.size or "",
+                s.antenna.name,
+                s.quantity,
+                " | ".join(tags) if tags else "",
+            ]
+        )
+
+    csv_content = "\ufeff" + buffer.getvalue()
+    filename = f"stock_protection_civile_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.csv"
+    headers = {"Content-Disposition": f"attachment; filename={filename}"}
+    return Response(csv_content, mimetype="text/csv; charset=utf-8", headers=headers)
+
+
 @app.post("/api/stock")
 @login_required
 def stock_add():
