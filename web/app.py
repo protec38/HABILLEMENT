@@ -553,6 +553,28 @@ def volunteers_template_csv():
         headers={"Content-Disposition": 'attachment; filename="benevoles_modele.csv"'}
     )
 
+
+@app.get("/api/volunteers/export.csv")
+@login_required
+def volunteers_export_csv():
+    si = StringIO()
+    writer = csv.writer(si, delimiter=';')
+    writer.writerow(["Nom", "Prénom", "Note"])
+    for volunteer in Volunteer.query.order_by(Volunteer.last_name, Volunteer.first_name):
+        writer.writerow([
+            volunteer.last_name or "",
+            volunteer.first_name or "",
+            volunteer.note or "",
+        ])
+
+    data = si.getvalue().encode("utf-8-sig")
+    return Response(
+        data,
+        mimetype="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="benevoles_export.csv"'}
+    )
+
+
 @app.post("/api/volunteers/import")
 @login_required
 def volunteers_import_csv():
