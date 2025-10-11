@@ -737,14 +737,27 @@ def stock_delete(item_id):
         removed_loans += 1
         log_action("loan.delete.with_stock", "loan", loan.id, f"stock_item={item_id}")
         db.session.delete(loan)
+
+    removed_inventory_lines = 0
+    inventory_lines = InventoryLine.query.filter_by(stock_item_id=item_id).all()
+    for line in inventory_lines:
+        removed_inventory_lines += 1
+        log_action("inventory_line.delete.with_stock", "inventory_line", line.id, f"stock_item={item_id}")
+        db.session.delete(line)
+
     try:
         db.session.delete(s)
-        log_action("stock.delete", "stock", item_id, f"delete loans={removed_loans}")
+        log_action(
+            "stock.delete",
+            "stock",
+            item_id,
+            f"delete loans={removed_loans} inventory_lines={removed_inventory_lines}",
+        )
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
         return jsonify({"ok": False, "error": "Suppression refusée (contraintes liées)."}), 400
-    return jsonify({"ok": True, "removed_loans": removed_loans})
+    return jsonify({"ok": True, "removed_loans": removed_loans, "removed_inventory_lines": removed_inventory_lines})
 
 # ---------------------------------------------------------------------
 # Volunteers (liste + recherche + import CSV + CRUD)
@@ -960,6 +973,29 @@ def loan_return(loan_id):
     db.session.commit()
     log_action("loan.return", "loan", loan_id, f"+{l.qty} to stock_item={l.stock_item_id}")
     return jsonify({"ok": True})
+
+
+@app.get("/api/loans/history")
+@login_required
+def loans_history():
+    limit = request.args.get("limit", default=100, type=int)
+    limit = max(1, min(limit or 100, 500))
+    res = []
+    q = Loan.query.order_by(Loan.created_at.desc()).limit(limit)
+    for l in q.all():
+        res.append(
+            {
+                "id": l.id,
+                "qty": l.qty,
+                "created_at": l.created_at.isoformat(),
+                "returned_at": l.returned_at.isoformat() if l.returned_at else None,
+                "volunteer": f"{l.volunteer.last_name} {l.volunteer.first_name}",
+                "type": l.stock_item.garment_type.label,
+                "size": l.stock_item.size,
+                "antenna": l.stock_item.antenna.name,
+            }
+        )
+    return jsonify(res)
 
 # ---------------------------------------------------------------------
 # Public (QR) + filtres
