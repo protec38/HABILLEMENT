@@ -975,6 +975,25 @@ def loan_return(loan_id):
     return jsonify({"ok": True})
 
 
+@app.delete("/api/loans/<int:loan_id>")
+@login_required
+def loan_delete(loan_id):
+    loan = db.session.get(Loan, loan_id)
+    if not loan:
+        return jsonify({"error": "Prêt introuvable"}), 404
+
+    item = db.session.get(StockItem, loan.stock_item_id)
+    details = f"qty={loan.qty} stock_item={loan.stock_item_id}"
+    if item and not loan.returned_at:
+        item.quantity += loan.qty
+        details += " restock"
+
+    db.session.delete(loan)
+    log_action("loan.delete", "loan", loan_id, details)
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
 @app.get("/api/loans/history")
 @login_required
 def loans_history():
@@ -1024,6 +1043,15 @@ def public_stock():
     for s in q.all():
         res.append({"id": s.id, "type": s.garment_type.label, "type_id": s.garment_type_id, "size": s.size, "antenna": s.antenna.name, "antenna_id": s.antenna_id, "quantity": s.quantity})
     return jsonify(res)
+
+
+@app.get("/api/public/antenna/<int:antenna_id>")
+def public_antenna(antenna_id):
+    antenna = db.session.get(Antenna, antenna_id)
+    if not antenna:
+        return jsonify({"error": "Antenne introuvable"}), 404
+    return jsonify({"id": antenna.id, "name": antenna.name})
+
 
 @app.get("/api/public/types")
 def public_types():
