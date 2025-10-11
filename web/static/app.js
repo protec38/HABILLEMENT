@@ -206,6 +206,7 @@ const App = {
         <div class="chips">
           <input id="volSearch" class="input" placeholder="Rechercher (nom, prénom, note)" style="min-width:260px">
           <a class="btn btn-ghost" href="/api/volunteers/template.csv">⬇️ Modèle CSV</a>
+          <a class="btn btn-ghost" href="/api/volunteers/export.csv">⬇️ Export CSV</a>
           <input id="volImportFile" type="file" accept=".csv" style="display:none">
           <button class="btn btn-ghost" onclick="document.getElementById('volImportFile').click()">Importer CSV</button>
           <button class="btn btn-primary" onclick="App.modalAddVol()">+ Bénévole</button>
