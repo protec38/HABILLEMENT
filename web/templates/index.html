@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <title>Protection Civile - Habillement</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="/static/app.css" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}" />
 
   <!-- Leaflet (si tu affiches une carte quelque part) -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
@@ -15,7 +15,7 @@
   <header class="topbar">
     <div class="wrap">
       <div class="brand">
-        <img src="/static/logo_pc.png" alt="Protection Civile" class="logo" />
+        <img src="{{ url_for('static', filename='logo_pc.png') }}" alt="Protection Civile" class="logo" />
         <span>Habillement</span>
       </div>
       <nav class="nav" id="nav"></nav>
@@ -62,7 +62,7 @@
     <div id="flash"></div>
   </main>
 
-  <script src="/static/app.js"></script>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
   <script>
     // Raccourci ENTER pour le login + init app
     document.addEventListener('DOMContentLoaded', () => {
