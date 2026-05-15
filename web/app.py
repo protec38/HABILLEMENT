@@ -1,14 +1,18 @@
 import os
 import time
 import csv
+import socket
 from io import StringIO
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 
 from flask import Flask, jsonify, request, render_template, Response
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import (
     LoginManager, login_user, login_required, logout_user, current_user, UserMixin
 )
+from ldap3 import ALL, BASE, Connection, Server, SUBTREE
+from ldap3.utils.conv import escape_filter_chars
 from passlib.hash import bcrypt
 from sqlalchemy import text, or_
 from sqlalchemy.exc import IntegrityError
@@ -42,6 +46,14 @@ class User(db.Model, UserMixin):
     name = db.Column(db.String(120), nullable=False)
     pwd_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(20), default="admin")
+    source = db.Column(db.String(20), default="local", nullable=False)
+    ldap_uid = db.Column(db.String(255), index=True)
+    ldap_dn = db.Column(db.String(512))
+
+class AppSetting(db.Model):
+    __tablename__ = "app_settings"
+    key = db.Column(db.String(120), primary_key=True)
+    value = db.Column(db.Text, default="")
 
 class Antenna(db.Model):
     __tablename__ = "antennas"
@@ -149,6 +161,9 @@ with app.app_context():
         db.session.execute(text("ALTER TABLE antennas ADD COLUMN IF NOT EXISTS low_stock_threshold INTEGER"))
         db.session.execute(text("ALTER TABLE antennas ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION"))
         db.session.execute(text("ALTER TABLE antennas ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION"))
+        db.session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'local' NOT NULL"))
+        db.session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS ldap_uid VARCHAR(255)"))
+        db.session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS ldap_dn VARCHAR(512)"))
         db.session.commit()
     except Exception:
         db.session.rollback()
@@ -178,6 +193,164 @@ def text_to_tags(txt):
     if not txt: return []
     return [t.strip() for t in str(txt).split(",") if t.strip()]
 
+def setting_get(key: str, default: str = "") -> str:
+    s = db.session.get(AppSetting, key)
+    return s.value if s and s.value is not None else default
+
+def setting_set(key: str, value: str):
+    s = db.session.get(AppSetting, key)
+    if not s:
+        s = AppSetting(key=key, value=value)
+        db.session.add(s)
+    else:
+        s.value = value
+
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+def ldap_config():
+    bind_password = setting_get("LDAP_BIND_PASSWORD", os.environ.get("LDAP_BIND_PASSWORD", ""))
+    return {
+        "enabled": env_bool("LDAP_ENABLED", False),
+        "url": os.environ.get("LDAP_URL", "ldap://lldap:3890"),
+        "bind_dn": os.environ.get("LDAP_BIND_DN", "uid=admin,ou=people,dc=apc38,dc=local"),
+        "bind_password": bind_password,
+        "user_base_dn": os.environ.get("LDAP_USER_BASE_DN", "ou=people,dc=apc38,dc=local"),
+        "user_filter": os.environ.get("LDAP_USER_FILTER", "(|(uid={username})(mail={username}))"),
+        "group_base_dn": os.environ.get("LDAP_GROUP_BASE_DN", "ou=groups,dc=apc38,dc=local"),
+        "group_filter": os.environ.get("LDAP_GROUP_FILTER", "(member={user_dn})"),
+        "group_name_attr": os.environ.get("LDAP_GROUP_NAME_ATTR", "cn"),
+        "required_group": os.environ.get("LDAP_GROUP_REQUIRED", "habillement"),
+        "group_role_map": os.environ.get("LDAP_GROUP_ROLE_MAP", "habillement:admin"),
+    }
+
+def ldap_public_config():
+    cfg = ldap_config()
+    return {
+        "enabled": cfg["enabled"],
+        "url": cfg["url"],
+        "bind_dn": cfg["bind_dn"],
+        "user_base_dn": cfg["user_base_dn"],
+        "user_filter": cfg["user_filter"],
+        "group_base_dn": cfg["group_base_dn"],
+        "group_filter": cfg["group_filter"],
+        "group_name_attr": cfg["group_name_attr"],
+        "required_group": cfg["required_group"],
+        "group_role_map": cfg["group_role_map"],
+        "bind_password_configured": bool(cfg["bind_password"]),
+    }
+
+def ldap_server(cfg):
+    return Server(cfg["url"], get_info=ALL, connect_timeout=5)
+
+def ldap_admin_connection(cfg):
+    conn = Connection(
+        ldap_server(cfg),
+        user=cfg["bind_dn"],
+        password=cfg["bind_password"],
+        auto_bind=True,
+        receive_timeout=8,
+    )
+    return conn
+
+def ldap_role_map(cfg):
+    mapping = {}
+    for item in (cfg["group_role_map"] or "").split(","):
+        if ":" not in item:
+            continue
+        group, role = item.split(":", 1)
+        group = group.strip()
+        role = role.strip()
+        if group and role:
+            mapping[group] = role
+    return mapping
+
+def ldap_user_payload(entry):
+    attrs = entry.entry_attributes_as_dict
+    def first(name):
+        value = attrs.get(name)
+        if isinstance(value, list):
+            return str(value[0]) if value else ""
+        return str(value or "")
+    email = first("mail")
+    uid = first("uid")
+    name = first("cn") or first("display_name") or email or uid
+    return {"dn": entry.entry_dn, "email": email or uid, "uid": uid or email, "name": name}
+
+def ldap_authenticate(identifier: str, password: str):
+    cfg = ldap_config()
+    if not cfg["enabled"]:
+        return None, "LDAP dÃ©sactivÃ©"
+    if not cfg["bind_password"]:
+        return None, "Mot de passe bind LDAP non configurÃ©"
+
+    escaped_identifier = escape_filter_chars(identifier)
+    user_filter = cfg["user_filter"].replace("{username}", escaped_identifier)
+
+    admin_conn = ldap_admin_connection(cfg)
+    try:
+        admin_conn.search(
+            search_base=cfg["user_base_dn"],
+            search_filter=user_filter,
+            search_scope=SUBTREE,
+            attributes=["uid", "mail", "cn", "display_name"],
+            size_limit=2,
+        )
+        if len(admin_conn.entries) != 1:
+            return None, "Utilisateur LDAP introuvable"
+        user = ldap_user_payload(admin_conn.entries[0])
+
+        user_conn = Connection(
+            ldap_server(cfg),
+            user=user["dn"],
+            password=password,
+            auto_bind=True,
+            receive_timeout=8,
+        )
+        user_conn.unbind()
+
+        group_filter = cfg["group_filter"].replace("{user_dn}", escape_filter_chars(user["dn"]))
+        admin_conn.search(
+            search_base=cfg["group_base_dn"],
+            search_filter=group_filter,
+            search_scope=SUBTREE,
+            attributes=[cfg["group_name_attr"]],
+        )
+        groups = []
+        for entry in admin_conn.entries:
+            values = entry.entry_attributes_as_dict.get(cfg["group_name_attr"], [])
+            if not isinstance(values, list):
+                values = [values]
+            groups.extend(str(v) for v in values if v)
+
+        required = cfg["required_group"]
+        if required and required not in groups:
+            return None, f"AccÃ¨s refusÃ© : groupe LDAP requis '{required}' absent"
+
+        role = ldap_role_map(cfg).get(required, "admin")
+        for group in groups:
+            if group in ldap_role_map(cfg):
+                role = ldap_role_map(cfg)[group]
+                break
+        user["groups"] = groups
+        user["role"] = role
+        return user, None
+    finally:
+        admin_conn.unbind()
+
+def ldap_tcp_check(url: str):
+    parsed = urlparse(url)
+    host = parsed.hostname or url
+    port = parsed.port or (636 if parsed.scheme == "ldaps" else 389)
+    with socket.create_connection((host, port), timeout=5):
+        return True
+
+def ldap_base_exists(conn, base_dn: str):
+    return conn.search(base_dn, "(objectClass=*)", search_scope=BASE, attributes=["dn"], size_limit=1)
+
 # ---------------------------------------------------------------------
 # Routes de base
 # ---------------------------------------------------------------------
@@ -200,11 +373,47 @@ def healthz():
 @app.post("/api/login")
 def login_api():
     d = request.get_json() or {}
-    email = (d.get("email") or "").strip().lower()
+    identifier = (d.get("email") or "").strip()
+    email = identifier.lower()
     password = d.get("password") or ""
+
     u = User.query.filter_by(email=email).first()
-    if not u or not bcrypt.verify(password, u.pwd_hash):
-        return jsonify({"ok": False, "error": "Identifiants invalides"}), 401
+    if u and (u.source or "local") != "ldap":
+        if not bcrypt.verify(password, u.pwd_hash):
+            return jsonify({"ok": False, "error": "Identifiants invalides"}), 401
+        login_user(u)
+        return jsonify({"ok": True, "user": {"id": u.id, "email": u.email, "name": u.name, "role": u.role}})
+
+    try:
+        ldap_user, ldap_error = ldap_authenticate(identifier, password)
+    except Exception:
+        ldap_user, ldap_error = None, "Identifiants invalides"
+    if not ldap_user:
+        return jsonify({"ok": False, "error": ldap_error or "Identifiants invalides"}), 401
+
+    ldap_email = (ldap_user["email"] or "").strip().lower()
+    existing = User.query.filter(or_(User.email == ldap_email, User.ldap_uid == ldap_user["uid"])).first()
+    if existing and (existing.source or "local") != "ldap":
+        return jsonify({"ok": False, "error": "Un compte local existe pour cet utilisateur"}), 401
+    if existing:
+        u = existing
+        u.email = ldap_email
+        u.name = ldap_user["name"] or ldap_email
+        u.role = ldap_user["role"]
+        u.ldap_uid = ldap_user["uid"]
+        u.ldap_dn = ldap_user["dn"]
+    else:
+        u = User(
+            email=ldap_email,
+            name=ldap_user["name"] or ldap_email,
+            pwd_hash="!ldap",
+            role=ldap_user["role"],
+            source="ldap",
+            ldap_uid=ldap_user["uid"],
+            ldap_dn=ldap_user["dn"],
+        )
+        db.session.add(u)
+    db.session.commit()
     login_user(u)
     return jsonify({"ok": True, "user": {"id": u.id, "email": u.email, "name": u.name, "role": u.role}})
 
@@ -523,7 +732,7 @@ def antennas_delete(ant_id):
 @login_required
 def users_list():
     users = User.query.order_by(User.email).all()
-    return jsonify([{"id": u.id, "email": u.email, "name": u.name, "role": u.role} for u in users])
+    return jsonify([{"id": u.id, "email": u.email, "name": u.name, "role": u.role, "source": u.source or "local"} for u in users])
 
 @app.post("/api/users")
 @login_required
@@ -554,9 +763,81 @@ def users_update(user_id):
     u.name = d.get("name", u.name)
     u.role = d.get("role", u.role)
     if d.get("password"):
+        if (u.source or "local") == "ldap":
+            return jsonify({"ok": False, "error": "Mot de passe LDAP gÃ©rÃ© dans LLDAP"}), 400
         u.pwd_hash = bcrypt.hash(d["password"])
     db.session.commit()
     return jsonify({"ok": True})
+
+@app.get("/api/admin/ldap/config")
+@login_required
+def ldap_config_api():
+    return jsonify(ldap_public_config())
+
+@app.put("/api/admin/ldap/config")
+@login_required
+def ldap_config_update_api():
+    d = request.get_json() or {}
+    if "bind_password" in d and d.get("bind_password"):
+        setting_set("LDAP_BIND_PASSWORD", d.get("bind_password"))
+        db.session.commit()
+    return jsonify({"ok": True, **ldap_public_config()})
+
+@app.post("/api/admin/ldap/diagnostic")
+@login_required
+def ldap_diagnostic_api():
+    d = request.get_json() or {}
+    cfg = ldap_config()
+    steps = []
+
+    def add(name, ok=None, detail=""):
+        status = "skipped" if ok is None else ("ok" if ok else "error")
+        steps.append({"name": name, "status": status, "detail": detail})
+
+    add("LDAP activÃ©", cfg["enabled"], "LDAP_ENABLED=true" if cfg["enabled"] else "LDAP_ENABLED=false")
+
+    try:
+        ldap_tcp_check(cfg["url"])
+        add("URL/port TCP", True, cfg["url"])
+    except Exception as e:
+        add("URL/port TCP", False, str(e))
+
+    conn = None
+    try:
+        conn = ldap_admin_connection(cfg)
+        add("Bind admin", True, cfg["bind_dn"])
+    except Exception as e:
+        add("Bind admin", False, str(e))
+
+    if conn:
+        try:
+            add("Users base DN", ldap_base_exists(conn, cfg["user_base_dn"]), cfg["user_base_dn"])
+        except Exception as e:
+            add("Users base DN", False, str(e))
+        try:
+            add("Groups base DN", ldap_base_exists(conn, cfg["group_base_dn"]), cfg["group_base_dn"])
+        except Exception as e:
+            add("Groups base DN", False, str(e))
+        try:
+            group_filter = f"({cfg['group_name_attr']}={escape_filter_chars(cfg['required_group'])})"
+            ok = conn.search(cfg["group_base_dn"], group_filter, search_scope=SUBTREE, attributes=[cfg["group_name_attr"]], size_limit=1)
+            add(f"PrÃ©sence du groupe requis {cfg['required_group']}", ok and len(conn.entries) > 0, group_filter)
+        except Exception as e:
+            add(f"PrÃ©sence du groupe requis {cfg['required_group']}", False, str(e))
+        conn.unbind()
+
+    test_identifier = (d.get("username") or "").strip()
+    test_password = d.get("password") or ""
+    if test_identifier and test_password:
+        try:
+            user, error = ldap_authenticate(test_identifier, test_password)
+            add("Test utilisateur LDAP", bool(user), (user["email"] if user else error or "refusÃ©"))
+        except Exception as e:
+            add("Test utilisateur LDAP", False, str(e))
+    else:
+        add("Test utilisateur LDAP", None, "Renseigner identifiant et mot de passe pour lancer ce test")
+
+    return jsonify({"ok": all(s["status"] != "error" for s in steps), "steps": steps, "config": ldap_public_config()})
 
 @app.delete("/api/users/<int:user_id>")
 @login_required

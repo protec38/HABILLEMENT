@@ -28,10 +28,27 @@ services:
       ADMIN_NAME: ${ADMIN_NAME:-Admin}
       SESSION_COOKIE_SAMESITE: ${SESSION_COOKIE_SAMESITE:-Lax}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      LDAP_ENABLED: ${LDAP_ENABLED:-true}
+      LDAP_URL: ${LDAP_URL:-ldap://lldap:3890}
+      LDAP_BIND_DN: ${LDAP_BIND_DN:-uid=admin,ou=people,dc=apc38,dc=local}
+      LDAP_USER_BASE_DN: ${LDAP_USER_BASE_DN:-ou=people,dc=apc38,dc=local}
+      LDAP_USER_FILTER: ${LDAP_USER_FILTER:-(|(uid={username})(mail={username}))}
+      LDAP_GROUP_BASE_DN: ${LDAP_GROUP_BASE_DN:-ou=groups,dc=apc38,dc=local}
+      LDAP_GROUP_FILTER: ${LDAP_GROUP_FILTER:-(member={user_dn})}
+      LDAP_GROUP_NAME_ATTR: ${LDAP_GROUP_NAME_ATTR:-cn}
+      LDAP_GROUP_REQUIRED: ${LDAP_GROUP_REQUIRED:-habillement}
+      LDAP_GROUP_ROLE_MAP: ${LDAP_GROUP_ROLE_MAP:-habillement:admin}
     ports:
       - "8010:8000"
     volumes:
       - ./web:/app
+    networks:
+      - default
+      - lldap_ldap_net
 
 volumes:
   dbdata:
+
+networks:
+  lldap_ldap_net:
+    external: true

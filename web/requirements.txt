@@ -7,5 +7,6 @@ passlib[bcrypt]==1.7.4
 # Pin bcrypt to a version compatible with passlib 1.7.4. Newer releases (>=4.0)
 # drop the __about__ attribute which causes runtime initialisation failures.
 bcrypt==3.2.2
+ldap3==2.9.1
 gunicorn==22.0.0
 Flask-WTF>=1.2.1
