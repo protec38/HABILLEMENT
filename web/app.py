@@ -115,7 +115,7 @@ class InventorySession(db.Model):
     __tablename__ = "inventory_sessions"
     id = db.Column(db.Integer, primary_key=True)
     antenna_id = db.Column(db.Integer, db.ForeignKey("antennas.id"), nullable=False)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     started_at = db.Column(db.DateTime, default=datetime.utcnow)
     closed_at = db.Column(db.DateTime, nullable=True)
     antenna = db.relationship(Antenna)
@@ -164,6 +164,7 @@ with app.app_context():
         db.session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'local' NOT NULL"))
         db.session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS ldap_uid VARCHAR(255)"))
         db.session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS ldap_dn VARCHAR(512)"))
+        db.session.execute(text("ALTER TABLE inventory_sessions ALTER COLUMN user_id DROP NOT NULL"))
         db.session.commit()
     except Exception:
         db.session.rollback()
@@ -848,8 +849,11 @@ def users_delete(user_id):
     if current_user.id == u.id:
         return jsonify({"ok": False, "error": "Impossible de supprimer votre propre compte."}), 400
     # Vérifie si l'utilisateur est référencé dans des inventaires
-    if InventorySession.query.filter_by(user_id=user_id).first():
-        return jsonify({"ok": False, "error": "Impossible : l'utilisateur est lié à des inventaires."}), 400
+    linked_inventories = InventorySession.query.filter_by(user_id=user_id).all()
+    for sess in linked_inventories:
+        sess.user_id = None
+    if linked_inventories:
+        log_action("user.delete.detach_inventories", "user", user_id, f"inventories={len(linked_inventories)}")
     try:
         db.session.delete(u)
         db.session.commit()
