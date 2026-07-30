@@ -636,38 +636,36 @@ const App = {
         antennaName=info.name||'';
       }catch{}
     }
-    // Précharge les types pour l’antenne
     const types = await this.fetchJSON(`/api/public/types${this.publicAntennaId?`?antenna_id=${this.publicAntennaId}`:''}`);
     el.innerHTML = `
-      <section class="public-hero">
-        <div>
-          <h1>Prêt public${antennaName?` <span class="badge">${antennaName}</span>`:''}</h1>
-          <p>Gérez les prêts d'une antenne depuis une interface claire : recherchez un bénévole, consultez ses prêts en cours et choisissez immédiatement la tenue à lui attribuer.</p>
+      <section class="public-hero" aria-labelledby="publicTitle">
+        <div class="public-heading">
+          <span class="public-eyebrow">Gestion des tenues</span>
+          <h1 id="publicTitle">${antennaName?this.esc(antennaName):'Prêt de tenue'}</h1>
+          <p>Qui vient chercher ou rendre une tenue&nbsp;?</p>
         </div>
-        <div class="public-card">
-          <div class="public-search-grid">
-            <input id='pubFN' class='input' placeholder='Prénom'>
-            <input id='pubLN' class='input' placeholder='Nom'>
-            <button type="button" class='btn btn-primary' onclick='App.findVolPublic()'>Chercher</button>
-          </div>
-        </div>
+        <form class="public-search" onsubmit="event.preventDefault(); App.findVolPublic()">
+          <label class="field"><span>Prénom</span><input id="pubFN" class="input" autocomplete="given-name" autocapitalize="words" placeholder="Ex. Marie" required></label>
+          <label class="field"><span>Nom</span><input id="pubLN" class="input" autocomplete="family-name" autocapitalize="words" placeholder="Ex. Dupont" required></label>
+          <button type="submit" class="btn btn-primary">Continuer</button>
+        </form>
       </section>
       <section class="public-layout">
-        <div id="publicFilters" class="card public-card hidden">
-          <h2>Filtrer le stock disponible</h2>
+        <div id="publicFilters" class="public-card public-filters hidden">
+          <div>
+            <span class="step-label">Tenues disponibles</span>
+            <h2>Que recherchez-vous&nbsp;?</h2>
+          </div>
           <div class="public-filters-grid">
-            <label class="field"><span>Type</span><select id="pubType"><option value="">Tous types</option>${types.map(t=>`<option value="${t.id}">${t.label}</option>`).join('')}</select></label>
-            <label class="field"><span>Taille</span><select id="pubSize" disabled><option value="">Toutes tailles</option></select></label>
+            <label class="field"><span>Type de tenue</span><select id="pubType"><option value="">Toutes les tenues</option>${types.map(t=>`<option value="${t.id}">${this.esc(t.label)}</option>`).join('')}</select></label>
+            <label class="field"><span>Taille</span><select id="pubSize" disabled><option value="">Toutes les tailles</option></select></label>
           </div>
-          <div class="chips" style="justify-content:flex-end">
-            <button type="button" class="btn btn-ghost" id="pubFilterBtn">Mettre à jour la liste</button>
-          </div>
-          <p class="helper-text">Le filtre s’applique au stock présenté pour le bénévole sélectionné.</p>
         </div>
-        <div id='pubResult' class="card public-card">
+        <div id="pubResult" class="public-card">
           <div class="empty-state">
-            <h3>Recherchez un bénévole</h3>
-            <p>Saisissez un nom pour afficher ses prêts en cours et la disponibilité de l’antenne.</p>
+            <span class="empty-icon" aria-hidden="true">👤</span>
+            <h2>Commencez par vous identifier</h2>
+            <p>Entrez simplement votre prénom et votre nom.</p>
           </div>
         </div>
       </section>`;
@@ -675,54 +673,38 @@ const App = {
     const resultBox = this.qs('#pubResult');
     if (resultBox) delete resultBox.dataset.volId;
     const filterCard=this.qs('#publicFilters');
-    const firstNameInput = this.qs('#pubFN');
-    const lastNameInput = this.qs('#pubLN');
-    const updatePublicFiltersVisibility = () => {
-      if(!filterCard) return;
-      const show = Boolean(firstNameInput?.value.trim()) && Boolean(lastNameInput?.value.trim());
-      filterCard.classList.toggle('hidden', !show);
-    };
     if(filterCard) filterCard.classList.add('hidden');
-    if(firstNameInput) firstNameInput.addEventListener('input', updatePublicFiltersVisibility);
-    if(lastNameInput) lastNameInput.addEventListener('input', updatePublicFiltersVisibility);
-    updatePublicFiltersVisibility();
 
-    // Gestion dynamique des tailles en fonction du type
     const typeSel = this.qs('#pubType');
     const sizeSel = this.qs('#pubSize');
     typeSel.onchange = async () => {
       const typeId = typeSel.value;
-      if(!typeId){ sizeSel.innerHTML = `<option value="">Toutes tailles</option>`; sizeSel.disabled = true; return; }
-      const sizes = await this.fetchJSON(`/api/public/sizes?type_id=${typeId}${this.publicAntennaId?`&antenna_id=${this.publicAntennaId}`:''}`);
-      sizeSel.innerHTML = `<option value="">Toutes tailles</option>` + sizes.map(s=>`<option>${s}</option>`).join('');
-      sizeSel.disabled = false;
-    };
-
-    // Bouton Filtrer : met à jour la liste du stock si un bénévole est déjà affiché
-    this.qs('#pubFilterBtn').onclick = () => {
-      const box = this.qs('#pubResult');
-      if(box.dataset.volId){ // un bénévole est chargé
-        this.reloadPublicStock(Number(box.dataset.volId));
+      if(!typeId){
+        sizeSel.innerHTML = `<option value="">Toutes les tailles</option>`;
+        sizeSel.disabled = true;
       }else{
-        this.flash('Cherche d’abord un bénévole.');
+        const sizes = await this.fetchJSON(`/api/public/sizes?type_id=${typeId}${this.publicAntennaId?`&antenna_id=${this.publicAntennaId}`:''}`);
+        sizeSel.innerHTML = `<option value="">Toutes les tailles</option>` + sizes.map(s=>`<option>${this.esc(s)}</option>`).join('');
+        sizeSel.disabled = false;
       }
+      if(resultBox.dataset.volId) await this.reloadPublicStock(Number(resultBox.dataset.volId));
+    };
+    sizeSel.onchange = () => {
+      if(resultBox.dataset.volId) this.reloadPublicStock(Number(resultBox.dataset.volId));
     };
   },
   async findVolPublic(){
-    const fn=this.qs('#pubFN').value; const ln=this.qs('#pubLN').value;
+    const fn=this.qs('#pubFN').value.trim(); const ln=this.qs('#pubLN').value.trim();
+    if(!fn || !ln) return;
     try { const v=await this.fetchJSON(`/api/public/volunteer?first_name=${encodeURIComponent(fn)}&last_name=${encodeURIComponent(ln)}`); await this.showVolPublic(v); }
     catch {
       const box = this.qs('#pubResult');
       if (box) {
         delete box.dataset.volId;
-        box.innerHTML = `<div class="empty-state"><h3>Bénévole non trouvé</h3><p>Vérifiez l’orthographe ou essayez avec un autre prénom/nom.</p></div>`;
+        box.innerHTML = `<div class="empty-state error-state"><span class="empty-icon" aria-hidden="true">?</span><h2>Personne non trouvée</h2><p>Vérifiez le prénom et le nom, puis réessayez.</p></div>`;
       }
       const filters=this.qs('#publicFilters');
-      if(filters){
-        const fnFilled = Boolean(this.qs('#pubFN')?.value.trim());
-        const lnFilled = Boolean(this.qs('#pubLN')?.value.trim());
-        filters.classList.toggle('hidden', !(fnFilled && lnFilled));
-      }
+      if(filters) filters.classList.add('hidden');
     }
   },
   async buildPublicStockQuery(){
@@ -741,30 +723,30 @@ const App = {
     const elList = this.qs('#pubLists');
     const loansHTML = loans.length ? loans.map(l=>`
         <li>
-          <div>
-            <strong>${l.type} ${l.size||''}</strong>
+          <div class="public-item-copy">
+            <strong>${this.esc(l.type)} ${this.esc(l.size||'')}</strong>
             <small>Depuis le ${new Date(l.since).toLocaleDateString()}</small>
           </div>
-          <button class='btn btn-ghost' onclick='App.returnLoanPublic(${l.id})'>Rendre</button>
+          <button class="btn btn-return" onclick="App.returnLoanPublic(${l.id})">Rendre la tenue</button>
         </li>`).join('') : `<li class="public-empty">Aucun prêt en cours</li>`;
     const stockHTML = stock.length ? stock.map(s=>`
         <li>
-          <div>
-            <strong>${s.type} ${s.size||''}</strong>
+          <div class="public-item-copy">
+            <strong>${this.esc(s.type)} ${this.esc(s.size||'')}</strong>
             <small>${s.quantity} en stock</small>
           </div>
-          <button class='btn btn-primary' onclick='App.borrow(${volId},${s.id})'>Emprunter</button>
-        </li>`).join('') : `<li class="public-empty">Aucun article correspondant</li>`;
+          <button class="btn btn-primary" onclick="App.borrow(${volId},${s.id})">Emprunter</button>
+        </li>`).join('') : `<li class="public-empty">Aucune tenue disponible avec ces filtres</li>`;
     elList.innerHTML = `
       <div class="public-lists">
-        <div>
-          <h4>Prêts en cours</h4>
+        <section>
+          <h3>À rendre <span class="count-badge">${loans.length}</span></h3>
           <ul>${loansHTML}</ul>
-        </div>
-        <div>
-          <h4>Stock disponible</h4>
+        </section>
+        <section>
+          <h3>Choisir une tenue <span class="count-badge">${stock.length}</span></h3>
           <ul>${stockHTML}</ul>
-        </div>
+        </section>
       </div>
     `;
   },
@@ -773,15 +755,19 @@ const App = {
     el.dataset.volId = v.id;
     el.innerHTML = `
       <div class="public-volunteer">
-        <div>
-          <h3>${v.first_name} ${v.last_name}</h3>
-          <p class="helper-text">Sélectionnez une tenue ci-dessous pour enregistrer un prêt instantanément.</p>
+        <div class="volunteer-banner">
+          <div class="volunteer-avatar" aria-hidden="true">${this.esc(v.first_name.charAt(0))}${this.esc(v.last_name.charAt(0))}</div>
+          <div>
+            <span class="step-label">Personne sélectionnée</span>
+            <h2>${this.esc(v.first_name)} ${this.esc(v.last_name)}</h2>
+          </div>
         </div>
         <div id="pubLists"></div>
       </div>`;
     const filters=this.qs('#publicFilters');
     if(filters) filters.classList.remove('hidden');
     await this.reloadPublicStock(v.id);
+    if(window.innerWidth <= 640) el.scrollIntoView({behavior:'smooth', block:'start'});
   },
   async borrow(volId, stockId){ try{ await this.fetchJSON('/api/public/loan',{method:'POST', body: JSON.stringify({volunteer_id:volId, stock_item_id:stockId, qty:1})}); this.flash('Tenue empruntée'); await this.reloadPublicStock(volId); }catch(e){ this.flash(e.message||'Emprunt refusé'); } },
   async returnLoanPublic(id){ try{ await this.fetchJSON('/api/public/return/'+id,{method:'POST'}); this.flash('Tenue rendue'); const box=this.qs('#pubResult'); if(box.dataset.volId){ await this.reloadPublicStock(Number(box.dataset.volId)); } }catch(e){ this.flash(e.message||'Retour refusé'); } },

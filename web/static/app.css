@@ -172,34 +172,57 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .bar{height:18px;background:linear-gradient(90deg,var(--pc-orange),var(--pc-orange-2));border-radius:8px}
 
 /* -------- Page prêt public -------- */
-#pretPublic{display:flex;flex-direction:column;gap:1.2rem}
-#pretPublic .public-hero{display:flex;flex-direction:column;gap:1rem;background:linear-gradient(135deg,rgba(11,59,110,.55),rgba(10,16,32,.8));border:1px solid rgba(148,163,184,.25);padding:1.4rem 1.6rem;border-radius:20px;box-shadow:0 18px 44px rgba(8,25,56,.3)}
-#pretPublic .public-hero h1{margin:0;font-size:1.8rem;font-weight:800;color:#fff}
-#pretPublic .public-hero p{margin:0;color:rgba(226,232,240,.8);line-height:1.4}
-#pretPublic .public-search-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.75rem}
-#pretPublic .public-search-grid .btn{height:100%}
-#pretPublic .public-layout{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1.2rem}
-#pretPublic .public-card{display:flex;flex-direction:column;gap:1rem}
-#pretPublic .public-card h2{margin:0;font-size:1.2rem}
-#pretPublic .public-filters-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:.75rem}
-#pretPublic label.field{display:flex;flex-direction:column;gap:.35rem;font-size:.9rem;color:var(--muted)}
-#pretPublic label.field span{font-size:.75rem;text-transform:uppercase;letter-spacing:.08em;color:rgba(148,163,184,.8)}
-#pretPublic #pubResult{position:relative}
-#pretPublic .empty-state{text-align:center;padding:2.2rem 1rem;color:var(--muted)}
-#pretPublic .public-lists{display:flex;flex-direction:column;gap:1.4rem}
-#pretPublic .public-lists h4{margin:0;font-size:1.05rem}
+#pretPublic{display:flex;flex-direction:column;gap:1rem;max-width:760px;margin:0 auto;padding-bottom:3rem}
+#pretPublic .public-hero{display:flex;flex-direction:column;gap:1.25rem;background:linear-gradient(145deg,#0b3b6e,#09294c);border:1px solid rgba(255,255,255,.12);padding:1.5rem;border-radius:22px;box-shadow:0 18px 44px rgba(2,6,23,.35)}
+#pretPublic .public-heading{display:flex;flex-direction:column;gap:.25rem}
+#pretPublic .public-eyebrow,#pretPublic .step-label{color:#ffbd66;font-size:.72rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase}
+#pretPublic .public-hero h1{margin:0;font-size:1.85rem;font-weight:850;color:#fff}
+#pretPublic .public-hero p{margin:0;color:rgba(255,255,255,.76)}
+#pretPublic .public-search{display:grid;grid-template-columns:1fr 1fr auto;gap:.75rem;align-items:end}
+#pretPublic .public-search .btn{min-height:50px;padding-inline:1.4rem}
+#pretPublic .public-layout{display:flex;flex-direction:column;gap:1rem}
+#pretPublic .public-card{display:flex;flex-direction:column;gap:1rem;background:#0f172a;border:1px solid rgba(255,255,255,.08);border-radius:20px;padding:1.15rem;box-shadow:0 10px 30px rgba(2,6,23,.24)}
+#pretPublic .hidden{display:none}
+#pretPublic .public-card h2{margin:.15rem 0 0;font-size:1.2rem}
+#pretPublic #pubResult{scroll-margin-top:74px}
+#pretPublic .public-filters-grid{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}
+#pretPublic label.field{display:flex;flex-direction:column;gap:.4rem}
+#pretPublic label.field span{font-size:.78rem;font-weight:700;color:rgba(226,232,240,.82)}
+#pretPublic .input,#pretPublic select{min-height:50px;font-size:16px}
+#pretPublic .empty-state{text-align:center;padding:1.8rem 1rem;color:var(--muted)}
+#pretPublic .empty-state h2{color:var(--text);margin:.6rem 0 .35rem}
+#pretPublic .empty-state p{margin:0}
+#pretPublic .empty-icon{display:grid;place-items:center;width:52px;height:52px;margin:auto;border-radius:50%;background:rgba(148,163,184,.12);font-size:1.4rem}
+#pretPublic .error-state .empty-icon{color:#fecaca;background:rgba(239,68,68,.14);font-weight:900}
+#pretPublic .public-lists{display:flex;flex-direction:column;gap:1.5rem}
+#pretPublic .public-lists h3{display:flex;align-items:center;gap:.5rem;margin:0 0 .65rem;font-size:1.05rem}
+#pretPublic .count-badge{display:inline-grid;place-items:center;min-width:24px;height:24px;padding:0 7px;border-radius:999px;background:rgba(148,163,184,.14);color:var(--muted);font-size:.75rem}
 #pretPublic .public-lists ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.6rem}
-#pretPublic .public-lists li{display:flex;justify-content:space-between;align-items:center;background:rgba(15,23,42,.45);border:1px solid rgba(148,163,184,.18);border-radius:14px;padding:.75rem 1rem;gap:.75rem}
-#pretPublic .public-lists li button{white-space:nowrap}
-#pretPublic .public-lists li small{color:var(--muted)}
+#pretPublic .public-lists li{display:flex;justify-content:space-between;align-items:center;background:#0b1220;border:1px solid rgba(148,163,184,.18);border-radius:15px;padding:.75rem;gap:.75rem}
+#pretPublic .public-item-copy{display:flex;min-width:0;flex-direction:column;gap:.2rem}
+#pretPublic .public-lists li button{white-space:nowrap;min-height:46px}
+#pretPublic .public-lists li small{display:block;color:var(--muted)}
+#pretPublic .btn-return{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.18)}
 #pretPublic .public-volunteer{display:flex;flex-direction:column;gap:1.4rem}
-#pretPublic .public-volunteer h3{margin:0;font-size:1.4rem}
+#pretPublic .volunteer-banner{display:flex;align-items:center;gap:.8rem}
+#pretPublic .volunteer-avatar{display:grid;place-items:center;flex:0 0 48px;height:48px;border-radius:50%;background:rgba(242,136,0,.17);border:1px solid rgba(242,136,0,.3);color:#ffd29a;font-weight:850}
+#pretPublic .public-volunteer h2{margin:.1rem 0 0;font-size:1.35rem}
 #pretPublic .public-empty{display:flex;justify-content:center;align-items:center;padding:.9rem;border:1px dashed rgba(148,163,184,.3);border-radius:12px;font-style:italic;color:var(--muted)}
-#pretPublic .helper-text{font-size:.8rem;color:rgba(226,232,240,.6)}
 
 @media (max-width:640px){
-  #pretPublic .public-hero{padding:1.2rem}
-  #pretPublic .public-hero h1{font-size:1.55rem}
-  #pretPublic .public-lists li{flex-direction:column;align-items:flex-start}
-  #pretPublic .public-lists li button{align-self:stretch}
+  body:has(#pretPublic:not(.hidden)) .topbar{position:static;box-shadow:none}
+  body:has(#pretPublic:not(.hidden)) .topbar .wrap{padding:.65rem 1rem}
+  body:has(#pretPublic:not(.hidden)) .nav{display:none}
+  body:has(#pretPublic:not(.hidden)) main.wrap{padding:.75rem}
+  #pretPublic{gap:.75rem}
+  #pretPublic .public-hero{padding:1.1rem;border-radius:18px}
+  #pretPublic .public-hero h1{font-size:1.5rem}
+  #pretPublic .public-search{grid-template-columns:1fr}
+  #pretPublic .public-search .btn{width:100%}
+  #pretPublic .public-card{padding:1rem;border-radius:17px}
+  #pretPublic .public-filters-grid{grid-template-columns:1fr}
+  #pretPublic .public-lists li{align-items:stretch;flex-direction:column}
+  #pretPublic .public-lists li button{width:100%}
+  #flash{left:.75rem;right:.75rem;bottom:.75rem}
+  #flash .toast{text-align:center}
 }
