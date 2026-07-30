@@ -4,14 +4,14 @@ const App = {
   user: null,
   publicAntennaId: null,
   nav: [
-    { id: "dashboard", label: "Dashboard", auth: true },
-    { id: "antennes", label: "Antennes", auth: true },
-    { id: "stock", label: "Stock", auth: true },
-    { id: "benevoles", label: "Bénévoles", auth: true },
-    { id: "prets", label: "Prêts en cours", auth: true },
-    { id: "inventaire", label: "Inventaire", auth: true },
-    { id: "admin", label: "Administration", auth: true },
-    { id: "pretPublic", label: "Prêt publique", auth: false },
+    { id: "dashboard", label: "Vue d’ensemble", icon: "⌂", auth: true },
+    { id: "antennes", label: "Antennes", icon: "⌖", auth: true },
+    { id: "stock", label: "Stock", icon: "▦", auth: true },
+    { id: "benevoles", label: "Bénévoles", icon: "♙", auth: true },
+    { id: "prets", label: "Prêts", icon: "↗", auth: true },
+    { id: "inventaire", label: "Inventaire", icon: "✓", auth: true },
+    { id: "admin", label: "Réglages", icon: "⚙", auth: true },
+    { id: "pretPublic", label: "Prêt public", icon: "↗", auth: false },
   ],
   dashboardData: null,
   dashboardState: null,
@@ -65,13 +65,15 @@ const App = {
     const frag = document.createDocumentFragment();
     (this.user ? this.nav : this.nav.filter((x) => !x.auth)).forEach((item) => {
       const a = document.createElement("a");
-      a.href = "#"; a.dataset.id = item.id; a.textContent = item.label;
+      a.href = "#"; a.dataset.id = item.id;
+      a.innerHTML = `<span class="nav-icon" aria-hidden="true">${item.icon || "•"}</span><span>${item.label}</span>`;
       a.onclick = (e) => { e.preventDefault(); this.show(item.id); };
       frag.appendChild(a);
     });
     if (this.user) {
       const lo = document.createElement("a");
-      lo.href = "#"; lo.textContent = "Déconnexion";
+      lo.href = "#"; lo.className = "nav-logout";
+      lo.innerHTML = '<span class="nav-icon" aria-hidden="true">↪</span><span>Déconnexion</span>';
       lo.onclick = async (e) => { e.preventDefault(); await this.fetchJSON("/api/logout", { method: "POST" }); this.user = null; location.href = "/"; };
       frag.appendChild(lo);
     }
@@ -280,6 +282,13 @@ const App = {
       </tbody></table>` : '<p class="muted">Aucun journal récent.</p>';
 
     el.innerHTML = `
+      <header class="page-head">
+        <div><span class="eyebrow">Pilotage</span><h1>Vue d’ensemble</h1><p>Les informations essentielles pour gérer les tenues aujourd’hui.</p></div>
+        <div class="page-actions">
+          <button class="btn btn-ghost" onclick="App.show('inventaire')">✓ Lancer un inventaire</button>
+          <button class="btn btn-primary" onclick="App.show('stock')">＋ Ajouter du stock</button>
+        </div>
+      </header>
       <div class="dashboard-grid">
         <div class="kpi-card">
           <span class="kpi-label">Articles en stock</span>
@@ -414,14 +423,19 @@ const App = {
   },
 
   // ------------------------------ Antennes ------------------------------
-  async renderAntennes(){ const el=this.qs('#antennes'); const ants=await this.fetchJSON('/api/antennas'); el.innerHTML=`<div class="card">
-    <div class="chips" style="justify-content:space-between"><h2>Antennes</h2><button class="btn btn-primary" onclick="App.modalAddAntenna()">+ Antenne</button></div>
-    <table class="table"><thead><tr><th>Nom</th><th>Adresse</th><th>Seuil alerte</th><th></th></tr></thead><tbody>
+  async renderAntennes(){ const el=this.qs('#antennes'); const ants=await this.fetchJSON('/api/antennas'); el.innerHTML=`
+    <header class="page-head">
+      <div><span class="eyebrow">Organisation</span><h1>Antennes</h1><p>Gérez les lieux de stockage et leurs seuils d’alerte.</p></div>
+      <div class="page-actions"><button class="btn btn-primary" onclick="App.modalAddAntenna()">＋ Nouvelle antenne</button></div>
+    </header>
+    <div class="summary-strip"><div class="summary-pill"><strong>${ants.length}</strong><span>antennes enregistrées</span></div><div class="summary-pill"><strong>${ants.filter(a=>typeof a.low_stock_threshold==='number').length}</strong><span>seuils configurés</span></div></div>
+    <div class="card"><div class="card-header"><div><h2>Liste des antennes</h2><span class="muted">Le seuil déclenche les alertes de stock faible.</span></div></div>
+    <div class="table-shell"><table class="table"><thead><tr><th>Nom</th><th>Adresse</th><th>Seuil d’alerte</th><th>Actions</th></tr></thead><tbody>
       ${ants.map(a=>`<tr><td>${a.name}</td><td class="muted">${a.address||''}</td>
       <td style="max-width:140px"><input class="input" type="number" min="0" value="${typeof a.low_stock_threshold==='number'?a.low_stock_threshold:''}" onblur="App.saveAntennaThreshold(${a.id}, this.value)"></td>
       <td class="chips"><button class="btn btn-ghost" onclick='App.modalEditAntenna(${a.id}, ${JSON.stringify(a).replaceAll("'","&apos;")})'>Modifier</button>
-      <button class="btn btn-ghost" onclick='App.deleteAntenna(${a.id})'>Supprimer</button></td></tr>`).join('')}
-    </tbody></table></div>`; },
+      <button class="btn btn-ghost btn-danger" onclick='App.deleteAntenna(${a.id})'>Supprimer</button></td></tr>`).join('')}
+    </tbody></table></div></div>`; },
   modalAddAntenna(){ this.openModal('Nouvelle antenne', `<div class="grid-3"><input id="ant_name" class="input" placeholder="Nom"><input id="ant_addr" class="input" placeholder="Adresse"><input id="ant_thr" class="input" type="number" min="0" placeholder="Seuil alerte (ex: 5)"></div><div class="chips" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.saveAntenna()">Enregistrer</button></div>`); },
   async saveAntenna(){ const name=this.qs('#ant_name').value.trim(); const address=this.qs('#ant_addr').value.trim(); const thr=this.qs('#ant_thr').value ? Number(this.qs('#ant_thr').value) : null; if(!name) return this.flash('Nom requis',false); const body={name,address}; if(thr!==null) body.low_stock_threshold=thr; await this.fetchJSON('/api/antennas',{method:'POST', body: JSON.stringify(body)}); this.closeModal(); this.renderAntennes(); this.flash('Antenne créée'); },
   modalEditAntenna(id,a){ this.openModal('Modifier antenne', `<div class="grid-3"><input id="e_ant_name" class="input" value="${a.name}"><input id="e_ant_addr" class="input" value="${a.address||''}"><input id="e_ant_thr" class="input" type="number" min="0" value="${typeof a.low_stock_threshold==='number'?a.low_stock_threshold:''}"></div><div class="chips" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.updateAntenna(${id})">Enregistrer</button></div>`); },
@@ -433,19 +447,25 @@ const App = {
   async renderStock(){ const el=this.qs('#stock'); const [types, ants]=await Promise.all([this.fetchJSON('/api/types'), this.fetchJSON('/api/antennas')]); this._types=types; this._ants=ants;
     const optType=(v)=>['<option value="">Type</option>'].concat(types.map(t=>`<option value="${t.id}" ${v==t.id?'selected':''}>${t.label}</option>`)).join('');
     const optAnt=(v)=>['<option value="">Antenne</option>'].concat(ants.map(a=>`<option value="${a.id}" ${v==a.id?'selected':''}>${a.name}</option>`)).join('');
-    el.innerHTML=`<div class="card">
-      <div class="chips" style="justify-content:space-between"><h2>Stock</h2>
-        <div class="chips">
+    el.innerHTML=`
+      <header class="page-head">
+        <div><span class="eyebrow">Habillement</span><h1>Stock</h1><p>Consultez, filtrez et mettez à jour les articles disponibles.</p></div>
+        <div class="page-actions">
           <button class="btn btn-export" onclick="App.exportStockCSV()">⭳ Export CSV</button>
           <button class="btn btn-ghost" onclick="App.modalAddType()">+ Type</button>
-          <button class="btn btn-primary" onclick="App.modalAddStock()">+ Article</button>
+          <button class="btn btn-primary" onclick="App.modalAddStock()">＋ Ajouter un article</button>
         </div>
-      </div>
-      <div class="grid-3 mt"><select id="f_type">${optType('')}</select><select id="f_ant">${optAnt('')}</select><button class="btn btn-ghost" onclick="App.loadStock()">Filtrer</button></div>
-      <div id="stockTable" class="mt"></div>
-    </div>`;
+      </header>
+      <div class="card">
+        <div class="toolbar">
+          <label class="field"><span class="field-label">Type d’article</span><select id="f_type">${optType('')}</select></label>
+          <label class="field"><span class="field-label">Antenne</span><select id="f_ant">${optAnt('')}</select></label>
+          <button class="btn btn-ghost" onclick="App.loadStock()">Appliquer les filtres</button>
+        </div>
+        <div id="stockTable"></div>
+      </div>`;
     this._optType=optType; this._optAnt=optAnt; await this.loadStock(); },
-  async loadStock(){ const t=this.qs('#f_type')?.value||''; const a=this.qs('#f_ant')?.value||''; const qs=[]; if(t) qs.push(`type_id=${t}`); if(a) qs.push(`antenna_id=${a}`); const stock=await this.fetchJSON('/api/stock'+(qs.length?`?${qs.join('&')}`:'')); this.qs('#stockTable').innerHTML=`<table class="table"><thead><tr><th>Type</th><th>Taille</th><th>Antenne</th><th>Qté</th><th>Tags</th><th></th></tr></thead><tbody>${stock.map(s=>`<tr><td>${s.garment_type}</td><td>${s.size||'—'}</td><td>${s.antenna}</td><td>${s.quantity}</td><td>${this.renderTagsInline(s.tags||[])}</td><td class="chips"><button class="btn btn-ghost" onclick='App.modalEditStock(${s.id}, ${JSON.stringify({id:s.id,type_id:s.garment_type_id,ant_id:s.antenna_id,size:s.size||"",qty:s.quantity,tags:s.tags||[]}).replaceAll("'","&apos;")})'>Modifier</button><button class="btn btn-ghost" onclick="App.deleteStock(${s.id})">Supprimer</button></td></tr>`).join('')}</tbody></table>`; },
+  async loadStock(){ const t=this.qs('#f_type')?.value||''; const a=this.qs('#f_ant')?.value||''; const qs=[]; if(t) qs.push(`type_id=${t}`); if(a) qs.push(`antenna_id=${a}`); const stock=await this.fetchJSON('/api/stock'+(qs.length?`?${qs.join('&')}`:'')); this.qs('#stockTable').innerHTML=`<div class="table-shell"><table class="table"><thead><tr><th>Article</th><th>Taille</th><th>Antenne</th><th>Quantité</th><th>Tags</th><th>Actions</th></tr></thead><tbody>${stock.length?stock.map(s=>`<tr><td><strong>${s.garment_type}</strong></td><td>${s.size||'—'}</td><td>${s.antenna}</td><td><span class="badge ${s.quantity<=0?'badge-danger':'badge-green'}">${s.quantity}</span></td><td>${this.renderTagsInline(s.tags||[])}</td><td class="chips"><button class="btn btn-ghost" onclick='App.modalEditStock(${s.id}, ${JSON.stringify({id:s.id,type_id:s.garment_type_id,ant_id:s.antenna_id,size:s.size||"",qty:s.quantity,tags:s.tags||[]}).replaceAll("'","&apos;")})'>Modifier</button><button class="btn btn-ghost btn-danger" onclick="App.deleteStock(${s.id})">Supprimer</button></td></tr>`).join(''):'<tr><td colspan="6" class="empty-state-row">Aucun article ne correspond à ces filtres.</td></tr>'}</tbody></table></div>`; },
   renderTagsInline(tags){ tags=Array.isArray(tags)? tags: String(tags||'').split(',').map(x=>x.trim()).filter(Boolean); if(!tags.length) return `<span class="muted">—</span>`; return `<div class="chips">${tags.map(t=>`<span class="badge">${t}</span>`).join('')}</div>`; },
   modalAddType(){ this.openModal('Ajouter un type', `<div class="grid-2"><input id="new_type" class="input" placeholder="Libellé (ex: Parka)"><label><input id="new_has_size" type="checkbox" checked> Avec taille</label></div><div class="chips" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.saveType()">Enregistrer</button></div><div class="mt"><button class="btn btn-ghost" onclick="App.manageTypes()">Gérer / Supprimer</button></div>`); },
   async manageTypes(){ const types=await this.fetchJSON('/api/types'); const body=`<div style="max-height:60vh;overflow:auto;"><table class="table"><thead><tr><th>Type</th><th>Taille ?</th><th></th></tr></thead><tbody>${types.map(t=>`<tr><td>${t.label}</td><td>${t.has_size?'Oui':'Non'}</td><td><button class="btn btn-ghost" onclick="App.deleteType(${t.id})">Supprimer</button></td></tr>`).join('')}</tbody></table></div>`; this.openModal('Types existants', body); },
@@ -498,26 +518,26 @@ const App = {
   // ------------------------------ Bénévoles (CRUD + recherche + import) ------------------------------
   _volLocal: [],
   async renderBenevoles(){ const el=this.qs('#benevoles'); const data=await this.fetchJSON('/api/volunteers'); this._volLocal=data;
-    el.innerHTML=`<div class="card">
-      <div class="chips" style="justify-content:space-between">
-        <h2>Bénévoles</h2>
-        <div class="chips">
-          <input id="volSearch" class="input" placeholder="Rechercher (nom, prénom, note)" style="min-width:260px">
+    el.innerHTML=`
+      <header class="page-head">
+        <div><span class="eyebrow">Équipe</span><h1>Bénévoles</h1><p>${data.length} personne${data.length>1?'s':''} enregistrée${data.length>1?'s':''} dans l’annuaire.</p></div>
+        <div class="page-actions">
           <a class="btn btn-ghost" href="/api/volunteers/template.csv">⬇️ Modèle CSV</a>
           <a class="btn btn-ghost" href="/api/volunteers/export.csv">⬇️ Export CSV</a>
           <input id="volImportFile" type="file" accept=".csv" style="display:none">
           <button class="btn btn-ghost" onclick="document.getElementById('volImportFile').click()">Importer CSV</button>
-          <button class="btn btn-primary" onclick="App.modalAddVol()">+ Bénévole</button>
+          <button class="btn btn-primary" onclick="App.modalAddVol()">＋ Nouveau bénévole</button>
         </div>
-      </div>
-      <p class="muted">Les doublons nom+prénom sont ignorés à l'import.</p>
+      </header>
+      <div class="card">
+      <div class="toolbar"><label class="field"><span class="field-label">Rechercher dans l’annuaire</span><input id="volSearch" class="input" placeholder="Nom, prénom ou note" style="min-width:280px"></label><span class="muted">Les doublons nom + prénom sont ignorés à l’import.</span></div>
       <div id="volTable"></div>
     </div>`;
     this.drawVolTable(this._volLocal);
     const fileInput=document.getElementById('volImportFile'); fileInput.onchange=async()=>{ const file=fileInput.files[0]; if(!file) return; await this.importVolunteersCSV(file); fileInput.value=""; };
     const search=this.qs('#volSearch'); search.oninput=()=>{ const q=search.value.trim().toLowerCase(); if(!q) return this.drawVolTable(this._volLocal); const f=this._volLocal.filter(v=> (v.last_name||'').toLowerCase().includes(q) || (v.first_name||'').toLowerCase().includes(q) || (v.note||'').toLowerCase().includes(q) ); this.drawVolTable(f); };
   },
-  drawVolTable(list){ this.qs('#volTable').innerHTML=`<table class="table"><thead><tr><th>Nom</th><th>Prénom</th><th>Notes</th><th></th></tr></thead><tbody>${(list||[]).map(v=>`<tr><td>${v.last_name}</td><td>${v.first_name}</td><td class="muted">${v.note||''}</td><td class="chips"><button class="btn btn-ghost" onclick='App.modalEditVol(${v.id}, ${JSON.stringify(v).replaceAll("'","&apos;")})'>Modifier</button><button class="btn btn-ghost" onclick='App.deleteVol(${v.id})'>Supprimer</button><button class="btn btn-ghost" onclick='App.viewVol(${v.id}, ${JSON.stringify(v).replaceAll("'","&apos;")})'>Voir</button></td></tr>`).join('')}</tbody></table>`; },
+  drawVolTable(list){ this.qs('#volTable').innerHTML=`<div class="table-shell"><table class="table"><thead><tr><th>Nom</th><th>Prénom</th><th>Notes</th><th>Actions</th></tr></thead><tbody>${(list||[]).length?(list||[]).map(v=>`<tr><td><strong>${v.last_name}</strong></td><td>${v.first_name}</td><td class="muted">${v.note||'—'}</td><td class="chips"><button class="btn btn-ghost" onclick='App.viewVol(${v.id}, ${JSON.stringify(v).replaceAll("'","&apos;")})'>Voir</button><button class="btn btn-ghost" onclick='App.modalEditVol(${v.id}, ${JSON.stringify(v).replaceAll("'","&apos;")})'>Modifier</button><button class="btn btn-ghost btn-danger" onclick='App.deleteVol(${v.id})'>Supprimer</button></td></tr>`).join(''):'<tr><td colspan="4" class="empty-state-row">Aucun bénévole ne correspond à votre recherche.</td></tr>'}</tbody></table></div>`; },
   modalAddVol(){ this.openModal('Nouveau bénévole', `<div class="grid-3"><input id="v_first" class="input" placeholder="Prénom"><input id="v_last" class="input" placeholder="Nom"><input id="v_note" class="input" placeholder="Infos"></div><div class="chips" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.addVol()">Enregistrer</button></div>`); },
   async addVol(){ const first_name=this.qs('#v_first').value.trim(); const last_name=this.qs('#v_last').value.trim(); const note=this.qs('#v_note').value.trim(); if(!first_name||!last_name) return this.flash('Prénom et nom requis',false); try{ await this.fetchJSON('/api/volunteers',{method:'POST', body: JSON.stringify({first_name,last_name,note})}); this.closeModal(); this.renderBenevoles(); this.flash('Bénévole créé'); }catch(e){ this.flash(e.message||'Création refusée'); } },
   modalEditVol(id,v){ this.openModal('Modifier bénévole', `<div class="grid-3"><input id="e_first" class="input" value="${v.first_name}"><input id="e_last" class="input" value="${v.last_name}"><input id="e_note" class="input" value="${v.note||''}"></div><div class="chips" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.saveEditVol(${id})">Enregistrer</button></div>`); },
@@ -533,27 +553,30 @@ const App = {
     el.innerHTML=`<div class="card"><p class="muted">Chargement des prêts…</p></div>`;
     try{
       const loans=await this.fetchJSON('/api/loans/open');
+      const overdueDays=this.getSetting('overdue_days',30);
+      const now=new Date();
       const rows=loans.length?loans.map(l=>`
             <tr>
-              <td>${l.volunteer}</td>
-              <td>${l.type} / ${l.size||'—'} @ ${l.antenna}</td>
-              <td>${l.qty}</td>
-              <td>${this.formatDateTime(l.since)}</td>
-              <td><button class="btn btn-ghost" onclick="App.returnLoan(${l.id})">Marquer rendu</button></td>
+              <td><strong>${l.volunteer}</strong></td>
+              <td>${l.type} · ${l.size||'sans taille'}<br><small class="muted">${l.antenna}</small></td>
+              <td><span class="badge">${l.qty}</span></td>
+              <td>${this.formatDateTime(l.since)}${this.daysBetween(new Date(l.since),now)>=overdueDays?'<br><span class="badge badge-danger">À relancer</span>':''}</td>
+              <td><button class="btn btn-primary" onclick="App.returnLoan(${l.id})">✓ Marquer rendu</button></td>
             </tr>
           `).join(''):`<tr><td colspan="5" class="muted" style="text-align:center;padding:1.2rem 0;">Aucun prêt en cours</td></tr>`;
       el.innerHTML=`
+        <header class="page-head">
+          <div><span class="eyebrow">Suivi des sorties</span><h1>Prêts en cours</h1><p>Suivez les tenues empruntées et enregistrez les retours.</p></div>
+          <div class="page-actions"><button class="btn btn-ghost" onclick="App.showLoanHistory()">↺ Consulter l’historique</button></div>
+        </header>
+        <div class="summary-strip"><div class="summary-pill"><strong>${loans.length}</strong><span>prêts ouverts</span></div><div class="summary-pill"><strong>${loans.filter(l=>this.daysBetween(new Date(l.since),now)>=overdueDays).length}</strong><span>à relancer après ${overdueDays} jours</span></div></div>
         <div class="card">
-          <div class="card-header">
-            <h2>Prêts en cours</h2>
-            <button class="btn btn-primary" onclick="App.showLoanHistory()">Historique des prêts</button>
-          </div>
-          <table class="table">
+          <div class="table-shell"><table class="table">
             <thead>
-              <tr><th>Bénévole</th><th>Article</th><th>Qté</th><th>Depuis</th><th></th></tr>
+              <tr><th>Bénévole</th><th>Article et antenne</th><th>Quantité</th><th>Emprunté depuis</th><th>Action</th></tr>
             </thead>
             <tbody>${rows}</tbody>
-          </table>
+          </table></div>
         </div>`;
     }catch(e){
       el.innerHTML=`<div class="card"><p class="alert">${e.message||'Impossible de charger les prêts'}</p></div>`;
@@ -601,8 +624,16 @@ const App = {
   },
 
   // ------------------------------ Inventaire ------------------------------
-  async renderInventaire(){ const el=this.qs('#inventaire'); const ants=await this.fetchJSON('/api/antennas'); el.innerHTML=`<div class="card"><h2>Inventaire / Audit</h2><div class="grid-2"><select id="inv_ant">${['<option value="">Choisir une antenne</option>'].concat(ants.map(a=>`<option value="${a.id}">${a.name}</option>`)).join('')}</select><button class="btn btn-primary" onclick="App.startInventory()">Démarrer</button></div><div id="invZone" class="mt"></div></div>`; },
-  async startInventory(){ const ant=Number(this.qs('#inv_ant').value||0); if(!ant) return this.flash('Choisis une antenne'); const sess=await this.fetchJSON('/api/inventory/start',{method:'POST', body: JSON.stringify({antenna_id:ant})}); const items=await this.fetchJSON(`/api/inventory/${sess.id}/items`); const zone=this.qs('#invZone'); zone.innerHTML=`<div class="card"><div class="chips" style="justify-content:space-between"><h3>Session #${sess.id} — ${items.antenna}</h3><button class="btn btn-ghost" onclick="App.closeInventory(${sess.id})">Valider et clôturer</button></div><p class="muted">Tape la quantité physiquement comptée.</p><table class="table"><thead><tr><th>Article</th><th>Taille</th><th>Stock</th><th>Compté</th></tr></thead><tbody>${items.rows.map(r=>`<tr><td>${r.type}</td><td>${r.size||'—'}</td><td>${r.quantity}</td><td><input class="input" type="number" min="0" value="${r.quantity}" onblur="App.saveCount(${sess.id},${r.stock_item_id},this.value)"></td></tr>`).join('')}</tbody></table></div>`; },
+  async renderInventaire(){ const el=this.qs('#inventaire'); const ants=await this.fetchJSON('/api/antennas'); el.innerHTML=`
+    <header class="page-head"><div><span class="eyebrow">Contrôle du stock</span><h1>Inventaire</h1><p>Comparez simplement le stock enregistré au comptage réel.</p></div></header>
+    <div class="inventory-intro">
+      <div class="card"><h2>Nouvel inventaire</h2><p class="muted">Choisissez l’antenne à contrôler. Les quantités attendues seront préparées automatiquement.</p>
+        <div class="toolbar"><label class="field"><span class="field-label">Antenne à inventorier</span><select id="inv_ant">${['<option value="">Sélectionner une antenne</option>'].concat(ants.map(a=>`<option value="${a.id}">${a.name}</option>`)).join('')}</select></label><button class="btn btn-primary" onclick="App.startInventory()">Commencer le comptage →</button></div>
+        <div class="inventory-steps"><div class="inventory-step"><strong>1. Sélectionner</strong>Choisissez une antenne.</div><div class="inventory-step"><strong>2. Compter</strong>Saisissez le stock réel.</div><div class="inventory-step"><strong>3. Valider</strong>Clôturez le contrôle.</div></div>
+      </div>
+      <div class="card surface-flat"><h3>Bon à savoir</h3><p class="muted">Chaque quantité est enregistrée dès que vous quittez le champ. Vous pouvez donc avancer article par article sans perdre votre travail.</p></div>
+    </div><div id="invZone" class="mt"></div>`; },
+  async startInventory(){ const ant=Number(this.qs('#inv_ant').value||0); if(!ant) return this.flash('Choisissez une antenne'); const sess=await this.fetchJSON('/api/inventory/start',{method:'POST', body: JSON.stringify({antenna_id:ant})}); const items=await this.fetchJSON(`/api/inventory/${sess.id}/items`); const zone=this.qs('#invZone'); zone.innerHTML=`<div class="card"><div class="card-header"><div><span class="eyebrow">Comptage en cours</span><h2>${items.antenna}</h2><span class="muted">Session n° ${sess.id} · ${items.rows.length} références</span></div><button class="btn btn-primary" onclick="App.closeInventory(${sess.id})">✓ Valider et clôturer</button></div><div class="table-shell"><table class="table"><thead><tr><th>Article</th><th>Taille</th><th>Stock attendu</th><th>Quantité comptée</th></tr></thead><tbody>${items.rows.map(r=>`<tr><td><strong>${r.type}</strong></td><td>${r.size||'—'}</td><td>${r.quantity}</td><td style="max-width:180px"><input class="input" aria-label="Quantité comptée pour ${this.esc(r.type)}" type="number" min="0" value="${r.quantity}" onblur="App.saveCount(${sess.id},${r.stock_item_id},this.value)"></td></tr>`).join('')}</tbody></table></div></div>`; zone.scrollIntoView({behavior:'smooth',block:'start'}); },
   async saveCount(sid,stockId,val){ const counted=Math.max(0, Number(val||0)); try{ await this.fetchJSON(`/api/inventory/${sid}/count`,{method:'POST', body: JSON.stringify({stock_item_id:stockId, counted_qty:counted})}); this.flash('Comptage enregistré'); }catch(e){ this.flash(e.message||'Enregistrement refusé'); } },
   async closeInventory(sid){ try{ await this.fetchJSON(`/api/inventory/${sid}/close`,{method:'POST'}); this.flash('Inventaire clôturé ✅'); this.renderInventaire(); }catch(e){ this.flash(e.message||'Clôture refusée'); } },
 

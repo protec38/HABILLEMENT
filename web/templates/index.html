@@ -15,8 +15,8 @@
   <header class="topbar">
     <div class="wrap">
       <div class="brand">
-        <img src="{{ url_for('static', filename='logo_pc.png') }}" alt="Protection Civile" class="logo" />
-        <span>Habillement</span>
+        <span class="brand-mark"><img src="{{ url_for('static', filename='logo_pc.png') }}" alt="" class="logo" /></span>
+        <span class="brand-copy"><strong>Habillement</strong><small>Protection Civile</small></span>
       </div>
       <nav class="nav" id="nav"></nav>
     </div>
@@ -48,11 +48,11 @@
     <section id="pretPublic" class="screen hidden"></section>
 
     <!-- MODAL (overlay + carte opaques) -->
-    <div id="modal" class="modal hidden">
+    <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
       <div class="modal-card">
         <div class="modal-header">
           <div id="modalTitle"></div>
-          <button class="btn btn-ghost" onclick="App.closeModal()">✕</button>
+          <button class="btn btn-icon btn-ghost" onclick="App.closeModal()" aria-label="Fermer">×</button>
         </div>
         <div id="modalBody"></div>
       </div>
@@ -63,16 +63,5 @@
   </main>
 
   <script src="{{ url_for('static', filename='app.js') }}"></script>
-  <script>
-    // Raccourci ENTER pour le login + init app
-    document.addEventListener('DOMContentLoaded', () => {
-      const onEnter = (e) => { if (e.key === 'Enter') { e.preventDefault(); App.login(); } };
-      const em = document.getElementById('loginEmail');
-      const pw = document.getElementById('loginPass');
-      if (em) em.addEventListener('keydown', onEnter);
-      if (pw) pw.addEventListener('keydown', onEnter);
-      App.init();
-    });
-  </script>
 </body>
 </html>
